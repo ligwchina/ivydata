@@ -326,12 +326,13 @@ def main():
 
             start_time = datetime.now()
 
-            # 确定开始日期
+            # 确定开始日期，通达信要求格式为YYYYMMDD
             start_date = ''
             if not is_new:
                 last_date = get_last_k_date(conn, code)
                 if last_date:
-                    start_date = last_date
+                    # 将YYYY-MM-DD转换为YYYYMMDD格式
+                    start_date = last_date.replace('-', '')
                     log(f"  上次抓取截止日期: {last_date}，从该日期开始增量获取")
 
             df, error = get_day_k_data(code, code_converted, start_date)

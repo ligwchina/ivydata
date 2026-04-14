@@ -326,17 +326,22 @@ def main():
 
             start_time = datetime.now()
 
-            # 确定开始日期，仅用于日志显示
-            start_date_log = ''
+            # 确定开始日期，通达信要求格式为YYYYMMDD
+            start_date = ''
+            last_date = ''
             if not is_new:
-                # 获取最后日期用于日志，但不传给通达信（直接获取所有数据）
+                # 获取最后日期并加一天
                 result = conn.execute(f"SELECT MAX(date) FROM t_day_k WHERE code = '{code}'").fetchone()
                 if result and result[0]:
-                    start_date_log = str(result[0])
-                    log(f"  上次抓取截止日期: {start_date_log}，将获取所有数据并过滤新数据")
+                    last_date = result[0]
+                    # 加一天作为开始日期
+                    next_date = last_date + pd.Timedelta(days=1)
+                    # 转换为YYYYMMDD格式
+                    start_date = str(next_date).replace('-', '')
+                    log(f"  上次抓取截止日期: {last_date}，从 {next_date} 开始增量获取")
             
-            # 直接获取所有数据，然后在本地过滤
-            df, error = get_day_k_data(code, code_converted, '')
+            # 使用通达信接口的日期过滤功能
+            df, error = get_day_k_data(code, code_converted, start_date)
 
             if error and "初始化失败" in str(error):
                 log(f"  TQ接口失效，尝试重新初始化...")

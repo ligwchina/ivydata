@@ -6,7 +6,7 @@ import requests
 import pandas as pd
 from io import StringIO
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test'))
 from code_converter import convert_code, get_exchange, is_a_stock, is_fund
 
 

@@ -226,7 +226,7 @@ def save_day_k_data(conn, df, code, incremental=True):
 
 
 def get_last_k_date(conn, code):
-    """获取某个代码的最后一条K线数据日期的下一天
+    """获取某个代码的最后一条K线数据日期
     返回: 日期字符串格式YYYY-MM-DD，如果没有数据则返回None
     """
     try:
@@ -234,10 +234,7 @@ def get_last_k_date(conn, code):
             SELECT MAX(date) FROM t_day_k WHERE code = '{code}'
         """).fetchone()
         if result and result[0]:
-            # 获取最后日期并加一天
-            last_date = result[0]
-            next_date = last_date + pd.Timedelta(days=1)
-            return str(next_date)
+            return str(result[0])
         return None
     except Exception as e:
         return None
@@ -329,16 +326,17 @@ def main():
 
             start_time = datetime.now()
 
-            # 确定开始日期，通达信要求格式为YYYYMMDD
-            start_date = ''
+            # 确定开始日期，仅用于日志显示
+            start_date_log = ''
             if not is_new:
-                last_date = get_last_k_date(conn, code)
-                if last_date:
-                    # 将YYYY-MM-DD转换为YYYYMMDD格式
-                    start_date = last_date.replace('-', '')
-                    log(f"  上次抓取截止日期: {last_date}，从该日期开始增量获取")
-
-            df, error = get_day_k_data(code, code_converted, start_date)
+                # 获取最后日期用于日志，但不传给通达信（直接获取所有数据）
+                result = conn.execute(f"SELECT MAX(date) FROM t_day_k WHERE code = '{code}'").fetchone()
+                if result and result[0]:
+                    start_date_log = str(result[0])
+                    log(f"  上次抓取截止日期: {start_date_log}，将获取所有数据并过滤新数据")
+            
+            # 直接获取所有数据，然后在本地过滤
+            df, error = get_day_k_data(code, code_converted, '')
 
             if error and "初始化失败" in str(error):
                 log(f"  TQ接口失效，尝试重新初始化...")

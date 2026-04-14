@@ -47,6 +47,7 @@ env/
 # Database
 *.duckdb
 *.db
+duckdb.exe
 
 # Environment
 .env

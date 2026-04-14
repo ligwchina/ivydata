@@ -105,30 +105,39 @@ def init_db():
         raise SystemExit(1)
 
 
-def get_codes_to_grab(conn):
-    """获取需要抓取K线数据的代码列表"""
+def get_all_codes(conn):
+    """获取所有代码列表，包括需要首次抓取和需要增量更新的代码"""
     try:
         sql = """
-        SELECT b.code, b.code_converted
+        SELECT b.code, b.code_converted, g.code as grabbed
         FROM t_base b
         LEFT JOIN t_grab_record g ON b.code = g.code
-        WHERE g.code IS NULL
         ORDER BY b.stock_or_fund, b.code
         """
         result = conn.execute(sql).fetchall()
-        return result
+        codes = []
+        for row in result:
+            code, code_converted, grabbed = row
+            codes.append({
+                'code': code,
+                'code_converted': code_converted,
+                'is_new': grabbed is None
+            })
+        return codes
     except Exception as e:
-        print_error(f"查询待抓取代码列表失败\n详细信息: {e}")
+        print_error(f"查询代码列表失败\n详细信息: {e}")
         raise SystemExit(1)
 
 
-def get_day_k_data(stock_code, stock_code_full):
-    """从通达信获取日K线数据"""
+def get_day_k_data(stock_code, stock_code_full, start_date=''):
+    """从通达信获取日K线数据
+    start_date: 开始日期，格式为YYYY-MM-DD，为空表示获取全部历史数据
+    """
     try:
         raw_data = tq.get_market_data(
             field_list=[],
             stock_list=[stock_code_full],
-            start_time='',
+            start_time=start_date,
             end_time='',
             count=0,
             dividend_type='none',
@@ -172,26 +181,63 @@ def get_day_k_data(stock_code, stock_code_full):
         return None, error_msg
 
 
-def save_day_k_data(conn, df, code):
-    """保存K线数据到数据库"""
+def save_day_k_data(conn, df, code, incremental=True):
+    """保存K线数据到数据库
+    incremental: True表示增量模式，只插入新数据；False表示全量替换
+    """
     if df is None or len(df) == 0:
         return 0, None
 
     try:
-        conn.execute(f"DELETE FROM t_day_k WHERE code = '{code}'")
+        if incremental:
+            # 获取已有的日期
+            existing_dates = set()
+            result = conn.execute(f"SELECT date FROM t_day_k WHERE code = '{code}'").fetchall()
+            for row in result:
+                existing_dates.add(row[0])
 
-        conn.register('k_data', df)
-        conn.execute("""
-            INSERT INTO t_day_k (code, date, open, high, low, close, volume, amount)
-            SELECT code, date, open, high, low, close, volume, amount FROM k_data
-        """)
-        conn.unregister('k_data')
+            # 只保留新数据
+            df['date'] = pd.to_datetime(df['date']).dt.date
+            new_df = df[~df['date'].isin(existing_dates)]
+            
+            if len(new_df) > 0:
+                conn.register('k_data', new_df)
+                conn.execute("""
+                    INSERT INTO t_day_k (code, date, open, high, low, close, volume, amount)
+                    SELECT code, date, open, high, low, close, volume, amount FROM k_data
+                """)
+                conn.unregister('k_data')
+            count = len(new_df)
+        else:
+            # 全量替换模式
+            conn.execute(f"DELETE FROM t_day_k WHERE code = '{code}'")
+            conn.register('k_data', df)
+            conn.execute("""
+                INSERT INTO t_day_k (code, date, open, high, low, close, volume, amount)
+                SELECT code, date, open, high, low, close, volume, amount FROM k_data
+            """)
+            conn.unregister('k_data')
+            count = len(df)
 
-        count = len(df)
         return count, None
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         return 0, error_msg
+
+
+def get_last_k_date(conn, code):
+    """获取某个代码的最后一条K线数据日期
+    返回: 日期字符串格式YYYY-MM-DD，如果没有数据则返回None
+    """
+    try:
+        result = conn.execute(f"""
+            SELECT MAX(date) FROM t_day_k WHERE code = '{code}'
+        """).fetchone()
+        if result and result[0]:
+            return str(result[0])
+        return None
+    except Exception as e:
+        return None
 
 
 def update_grab_record(conn, code, start_time, end_time):
@@ -225,7 +271,7 @@ def graceful_exit(conn, message):
 def main():
     """主函数"""
     log("=" * 50)
-    log("K线数据抓取程序启动")
+    log("K线数据增量抓取程序启动")
     log("=" * 50)
     
     try:
@@ -243,33 +289,52 @@ def main():
         is_run = get_config_value()
         log(f"配置 is_run = {is_run}")
 
-        codes = get_codes_to_grab(conn)
-        log(f"需要抓取的代码数量: {len(codes)}")
+        codes = get_all_codes(conn)
+        new_codes = [c for c in codes if c['is_new']]
+        existing_codes = [c for c in codes if not c['is_new']]
+        
+        log(f"总代码数量: {len(codes)}")
+        log(f"  新代码（待首次抓取）: {len(new_codes)}")
+        log(f"  已有代码（待增量更新）: {len(existing_codes)}")
 
         if not codes:
-            log("\n没有需要抓取的代码")
+            log("\n没有代码需要处理")
             conn.close()
             tq.close()
             log("程序正常退出")
             return
 
         log("\n" + "=" * 50)
-        log("开始抓取数据...")
+        log("开始处理数据...")
         log("=" * 50)
 
         success_count = 0
         fail_count = 0
+        total_new_records = 0
 
-        for i, (code, code_converted) in enumerate(codes):
+        for i, code_info in enumerate(codes):
             if is_run == 0 and i > 0:
-                log(f"\n配置 is_run=0，抓取单个代码后停止")
+                log(f"\n配置 is_run=0，处理单个代码后停止")
                 break
 
-            log(f"\n[{i+1}/{len(codes)}] 正在抓取: {code} ({code_converted})")
+            code = code_info['code']
+            code_converted = code_info['code_converted']
+            is_new = code_info['is_new']
+
+            status = "首次抓取" if is_new else "增量更新"
+            log(f"\n[{i+1}/{len(codes)}] 正在{status}: {code} ({code_converted})")
 
             start_time = datetime.now()
 
-            df, error = get_day_k_data(code, code_converted)
+            # 确定开始日期
+            start_date = ''
+            if not is_new:
+                last_date = get_last_k_date(conn, code)
+                if last_date:
+                    start_date = last_date
+                    log(f"  上次抓取截止日期: {last_date}，从该日期开始增量获取")
+
+            df, error = get_day_k_data(code, code_converted, start_date)
 
             if error and "初始化失败" in str(error):
                 log(f"  TQ接口失效，尝试重新初始化...")
@@ -280,44 +345,55 @@ def main():
                 try:
                     tq.initialize(__file__)
                     log(f"  TQ重新初始化成功")
-                    df, error = get_day_k_data(code, code_converted)
+                    df, error = get_day_k_data(code, code_converted, start_date)
                 except Exception as reinit_error:
                     log(f"  TQ重新初始化失败: {reinit_error}")
 
             if error:
                 fail_count += 1
                 log(f"  获取数据失败: {error}")
-                log(f"  该代码未抓取成功，不记录抓取记录")
-                log(f"  将在下次运行时重新尝试抓取")
+                if is_new:
+                    log(f"  该代码未抓取成功，不记录抓取记录")
+                    log(f"  将在下次运行时重新尝试抓取")
                 continue
 
             if df is None or len(df) == 0:
-                fail_count += 1
-                log(f"  未获取到数据")
-                log(f"  该代码未抓取成功，不记录抓取记录")
+                if is_new:
+                    fail_count += 1
+                    log(f"  未获取到数据")
+                    log(f"  该代码未抓取成功，不记录抓取记录")
+                else:
+                    log(f"  没有新数据")
+                    success_count += 1
                 continue
 
-            save_count, save_error = save_day_k_data(conn, df, code)
+            # 增量保存数据
+            save_count, save_error = save_day_k_data(conn, df, code, incremental=True)
 
             if save_error:
                 fail_count += 1
                 log(f"  保存数据失败: {save_error}")
-                log(f"  数据未保存，不记录抓取记录")
-                log(f"  将在下次运行时重新尝试")
+                if is_new:
+                    log(f"  数据未保存，不记录抓取记录")
+                    log(f"  将在下次运行时重新尝试")
                 continue
 
+            # 无论是否是新代码，都更新抓取记录
             record_error = update_grab_record(conn, code, start_time, datetime.now())
             if record_error:
-                log_warning(f"更新抓取记录失败: {record_error}")
+                print_warning(f"更新抓取记录失败: {record_error}")
 
             success_count += 1
-            log(f"  成功插入{save_count}条数据")
-            log(f"  抓取完成: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            total_new_records += save_count
+            if save_count > 0:
+                log(f"  成功插入{save_count}条新数据")
+            log(f"  处理完成: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
         log("\n" + "=" * 50)
         log("抓取任务完成!")
         log(f"成功: {success_count} 个代码")
         log(f"失败: {fail_count} 个代码")
+        log(f"新增K线记录: {total_new_records} 条")
         log("=" * 50)
 
     except SystemExit:
@@ -327,8 +403,8 @@ def main():
     except Exception as e:
         error_details = traceback.format_exc()
         print_error(f"程序执行过程中发生未预期的错误\n{error_details}")
-        log(f"\n已抓取成功的数据已保存到数据库")
-        log(f"未抓取成功的代码可在下次运行时重新抓取")
+        log(f"\n已处理成功的数据已保存到数据库")
+        log(f"未处理成功的代码可在下次运行时重新处理")
         if conn:
             conn.close()
         try:

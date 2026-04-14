@@ -1,57 +1,25 @@
-.DS_Store
-Thumbs.db
-db.json
-*.log
-node_modules/
-public/
-.deploy*/
-_multiconfig.yml
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.pyc
-*.pyo
-.pip-log.txt
-.pip-delete-this-directory.txt
-.tox/
-.nox/
-.coverage
-.coverage.*
-htmlcov/
-dist/
-build/
-*.egg-info/
-*.egg
-MANIFEST
-.pytest_cache/
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Virtual environments
-myenv311/
-venv/
-env/
-.venv
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Database
-*.duckdb
-*.db
-duckdb.exe
-
-# Environment
-.env
-.env.local
-
 # Logs
-data/logs/
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vite

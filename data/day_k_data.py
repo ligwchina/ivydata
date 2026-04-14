@@ -5,6 +5,10 @@ import pandas as pd
 from datetime import datetime
 import traceback
 
+# 添加导入路径，以便导入data_num.py中的函数
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../test/base'))
+from data_num import get_trade_dates_since
+
 # 1. 定义通达信安装根目录
 tdx_install_path = r"D:\new_tdx64"  # 请修改为你自己的通达信路径
 
@@ -374,7 +378,32 @@ def main():
                     success_count += 1
                 continue
 
-            # 增量保存数据
+            # 验证数据完整性：使用交易日历检查
+            if not is_new and start_date:
+                try:
+                    # 计算开始日期（YYYYMMDD转YYYY-MM-DD）
+                    start_date_str = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
+                    # 获取应该有的交易日
+                    expected_dates = get_trade_dates_since(start_date_str)
+                    expected_count = len(expected_dates)
+                    
+                    # 计算实际获取的数据量
+                    actual_count = len(df)
+                    
+                    log(f"  验证数据完整性: 预期 {expected_count} 个交易日，实际获取 {actual_count} 条数据")
+                    
+                    # 如果数据不完整，退出程序
+                    if actual_count != expected_count:
+                        log(f"  数据不完整！预期 {expected_count} 条，实际 {actual_count} 条")
+                        log(f"  请检查通达信本地数据是否完整")
+                        graceful_exit(conn, f"数据完整性验证失败: {code} 缺少数据")
+                    else:
+                        log(f"  数据完整性验证通过")
+                except Exception as e:
+                    log(f"  数据完整性验证失败: {e}")
+                    graceful_exit(conn, f"数据完整性验证异常: {e}")
+
+            # 保存数据到数据库
             save_count, save_error = save_day_k_data(conn, df, code, incremental=True)
 
             if save_error:

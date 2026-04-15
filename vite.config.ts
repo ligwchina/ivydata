@@ -25,6 +25,14 @@ export default defineConfig({
     tsconfigPaths(),
   ],
   server: {
+    watch: {
+      ignored: [
+        '**/.pnpm-store/**',
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/.git/**'
+      ]
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3001',

@@ -1,16 +1,16 @@
-import duckdb
+import psycopg2
 import json
 import sys
 import os
-from config import DB_PATH
+from config import DB_CONNECTION_STRING
 
 try:
-    # 连接到DuckDB数据库
-    con = duckdb.connect(DB_PATH)
+    # 连接到PostgreSQL数据库
+    con = psycopg2.connect(DB_CONNECTION_STRING)
 
     # 检查t_base表是否存在
     cursor = con.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='t_base';")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 't_base';")
     table_exists = cursor.fetchone()
 
     if not table_exists:
@@ -63,7 +63,8 @@ try:
         sys.stdout.reconfigure(encoding='utf-8')
     print(json.dumps(base_data, ensure_ascii=False))
 
-    # 关闭连接
+    # 关闭游标和连接
+    cursor.close()
     con.close()
 except Exception as e:
     print(f"Error: {str(e)}", file=sys.stderr)

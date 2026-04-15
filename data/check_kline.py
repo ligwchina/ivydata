@@ -1,40 +1,38 @@
-import duckdb
+import psycopg2
 import json
 import sys
 import os
+from config import DB_CONNECTION_STRING
 
 try:
     # 获取命令行参数中的股票代码
     code = sys.argv[1] if len(sys.argv) > 1 else '600519'
 
-    # 获取当前脚本所在目录
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # 数据库文件路径
-    db_path = os.path.join(script_dir, '..', 'stock_data.duckdb')
-    
-    # 连接到DuckDB数据库
-    con = duckdb.connect(db_path)
+    # 连接到PostgreSQL数据库
+    con = psycopg2.connect(DB_CONNECTION_STRING)
 
     # 检查day_k_data表是否存在
-    table_exists = con.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'day_k_data';").fetchone()
+    cursor = con.cursor()
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'day_k_data';")
+    table_exists = cursor.fetchone()
 
     if not table_exists:
         # 如果表不存在，创建表
-        con.execute('''
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS day_k_data (
             code VARCHAR,
             date DATE,
-            open DOUBLE,
-            high DOUBLE,
-            low DOUBLE,
-            close DOUBLE,
-            volume DOUBLE,
-            amount DOUBLE,
+            open DOUBLE PRECISION,
+            high DOUBLE PRECISION,
+            low DOUBLE PRECISION,
+            close DOUBLE PRECISION,
+            volume DOUBLE PRECISION,
+            amount DOUBLE PRECISION,
             PRIMARY KEY (code, date)
         )
         ''')
         # 插入一些模拟数据
-        con.execute('''
+        insert_query = '''
         INSERT INTO day_k_data (code, date, open, high, low, close, volume, amount)
         VALUES 
         ('600519', '2026-04-14', 1800, 1820, 1790, 1810, 1000000, 1810000000),
@@ -48,15 +46,18 @@ try:
         ('000858', '2026-04-11', 154, 156, 153, 156, 1400000, 2184000000),
         ('000858', '2026-04-10', 152, 154, 151, 154, 1200000, 1848000000)
         ''')
+        cursor.execute(insert_query)
+        con.commit()
 
     # 查询K线数据
-    result = con.execute('''
+    cursor.execute('''
         SELECT code, date, open, high, low, close, volume, amount 
         FROM day_k_data 
-        WHERE code = ? 
+        WHERE code = %s 
         ORDER BY date DESC
         LIMIT 50
-    ''', [code]).fetchall()
+    ''', (code,))
+    result = cursor.fetchall()
 
     # 转换为JSON格式
     kline_data = []
@@ -78,7 +79,8 @@ try:
         sys.stdout.reconfigure(encoding='utf-8')
     print(json.dumps(kline_data, ensure_ascii=False))
 
-    # 关闭连接
+    # 关闭游标和连接
+    cursor.close()
     con.close()
 except Exception as e:
     print(f"Error: {str(e)}", file=sys.stderr)

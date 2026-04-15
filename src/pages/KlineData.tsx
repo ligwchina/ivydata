@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Search, Download, RefreshCw, PlayCircle, Calendar } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Zoom } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Brush } from 'recharts'
 
 interface KlineDataItem {
   code: string
@@ -183,13 +183,13 @@ export default function KlineData() {
         </div>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+            <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 30 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" />
               <YAxis />
               <Tooltip />
-              <Zoom />
               <Area type="monotone" dataKey="close" stroke="#1e40af" fill="#dbeafe" />
+              <Brush dataKey="date" height={30} stroke="#1e40af" />
             </AreaChart>
           </ResponsiveContainer>
         </div>

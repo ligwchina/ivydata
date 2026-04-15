@@ -1,10 +1,21 @@
-import duckdb
+import psycopg2
 import os
 import pandas as pd
 import sys
 
+DB_CONFIG = {
+    'host': '127.0.0.1',
+    'port': 5432,
+    'user': 'ivydata',
+    'password': 'jcXz3rPjWrHY8MKF',
+    'database': 'ivydata'
+}
+
+def get_db_connection():
+    return psycopg2.connect(**DB_CONFIG)
+
 # 1. 定义通达信安装根目录
-tdx_install_path = r"D:\new_tdx64"  # 请修改为你自己的通达信路径
+tdx_install_path = r"D:\new_tdx64"
 
 # 2. 拼接出 PYPlugins/user 的绝对路径
 pyplugins_user_path = os.path.join(tdx_install_path, "PYPlugins", "user")
@@ -62,55 +73,51 @@ else:
 print(f"获取到{len(df)}条数据")
 print(df.head())
 
-# 数据库路径
-db_path = r'D:\dev\ai\ivydata\db\fund.duckdb'
-
-# 确保目录存在
-os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
-# 连接DuckDB数据库（只读模式检查，如果文件被占用则使用临时文件）
-try:
-    conn = duckdb.connect(db_path)
-except Exception as e:
-    print(f"警告：无法直接连接数据库，可能是文件被占用: {e}")
-    # 使用临时文件方式
-    temp_db_path = db_path.replace('.duckdb', '_temp.duckdb')
-    conn = duckdb.connect(temp_db_path)
-    print(f"使用临时数据库: {temp_db_path}")
+# 连接 PostgreSQL 数据库
+conn = get_db_connection()
+cur = conn.cursor()
 
 # 创建表（如果不存在）
-create_table_sql = """
-CREATE TABLE IF NOT EXISTS fund_etf_day_k (
-    code VARCHAR,
-    date DATE,
-    open DOUBLE,
-    high DOUBLE,
-    low DOUBLE,
-    close DOUBLE,
-    volume DOUBLE,
-    amount DOUBLE,
-    PRIMARY KEY (code, date)
-)
-"""
-conn.execute(create_table_sql)
-
-# 准备数据
-data_to_insert = df[['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount']].copy()
-
-# 清空该股票的旧数据，避免重复
-conn.execute(f"DELETE FROM fund_etf_day_k WHERE code = '{STOCK_CODE}'")
-
-# 插入数据
-conn.execute("""
-    INSERT INTO fund_etf_day_k (code, date, open, high, low, close, volume, amount)
-    SELECT code, date, open, high, low, close, volume, amount FROM data_to_insert
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS fund_etf_day_k (
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(20) NOT NULL,
+        date DATE NOT NULL,
+        open NUMERIC(18, 4) NOT NULL,
+        high NUMERIC(18, 4) NOT NULL,
+        low NUMERIC(18, 4) NOT NULL,
+        close NUMERIC(18, 4) NOT NULL,
+        volume BIGINT NOT NULL,
+        amount NUMERIC(18, 4) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(code, date)
+    )
 """)
 
-print(f"成功插入{len(data_to_insert)}条数据到fund_etf_day_k表")
+# 清空该股票的旧数据，避免重复
+cur.execute("DELETE FROM fund_etf_day_k WHERE code = %s", (STOCK_CODE,))
+
+# 准备数据
+for _, row in df.iterrows():
+    cur.execute("""
+        INSERT INTO fund_etf_day_k (code, date, open, high, low, close, volume, amount)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (code, date) DO UPDATE SET
+            open = EXCLUDED.open,
+            high = EXCLUDED.high,
+            low = EXCLUDED.low,
+            close = EXCLUDED.close,
+            volume = EXCLUDED.volume,
+            amount = EXCLUDED.amount
+    """, (row['code'], row['date'], row['open'], row['high'], row['low'], row['close'], row['volume'], row['amount']))
+
+conn.commit()
 
 # 验证数据
-result = conn.execute(f"SELECT COUNT(*) FROM fund_etf_day_k WHERE code = '{STOCK_CODE}'").fetchone()
+cur.execute("SELECT COUNT(*) FROM fund_etf_day_k WHERE code = %s", (STOCK_CODE,))
+result = cur.fetchone()
 print(f"表中{STOCK_CODE}的数据条数: {result[0]}")
 
+cur.close()
 conn.close()
 tq.close()

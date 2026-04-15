@@ -15,42 +15,20 @@ export default function BaseData() {
   const [searchTerm, setSearchTerm] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
+  const pageSize = 20
 
   // 从API获取基础数据
   useEffect(() => {
     const fetchBaseData = async () => {
       try {
         const response = await fetch('/api/data/base-data')
-        const data = await response.json()
-        if (data.success) {
-          setData(data.data)
-          setFilteredData(data.data)
-        } else {
-          console.error('获取基础数据失败:', data.message)
-          // 使用模拟数据作为 fallback
-          const mockData: BaseDataItem[] = [
-            { code: '600519', name: '贵州茅台', code_converted: '600519.SH', exchange: 'SH', stock_or_fund: 1 },
-            { code: '000858', name: '五粮液', code_converted: '000858.SZ', exchange: 'SZ', stock_or_fund: 1 },
-            { code: '000001', name: '平安银行', code_converted: '000001.SZ', exchange: 'SZ', stock_or_fund: 1 },
-            { code: '510050', name: '50ETF', code_converted: '510050.SH', exchange: 'SH', stock_or_fund: 2 },
-            { code: '513050', name: '中概互联', code_converted: '513050.SH', exchange: 'SH', stock_or_fund: 2 }
-          ]
-          setData(mockData)
-          setFilteredData(mockData)
+        const result = await response.json()
+        if (result.success) {
+          setData(result.data)
+          setFilteredData(result.data)
         }
       } catch (error) {
-        console.error('调用API失败:', error)
-        // 使用模拟数据作为 fallback
-        const mockData: BaseDataItem[] = [
-          { code: '600519', name: '贵州茅台', code_converted: '600519.SH', exchange: 'SH', stock_or_fund: 1 },
-          { code: '000858', name: '五粮液', code_converted: '000858.SZ', exchange: 'SZ', stock_or_fund: 1 },
-          { code: '000001', name: '平安银行', code_converted: '000001.SZ', exchange: 'SZ', stock_or_fund: 1 },
-          { code: '510050', name: '50ETF', code_converted: '510050.SH', exchange: 'SH', stock_or_fund: 2 },
-          { code: '513050', name: '中概互联', code_converted: '513050.SH', exchange: 'SH', stock_or_fund: 2 }
-        ]
-        setData(mockData)
-        setFilteredData(mockData)
+        console.error('获取基础数据失败:', error)
       }
     }
 

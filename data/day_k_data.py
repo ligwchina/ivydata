@@ -5,36 +5,41 @@ import pandas as pd
 from datetime import datetime
 import traceback
 
-# 添加导入路径，以便导入data_num.py中的函数
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../test/base'))
 from data_num import get_trade_dates_since
 
-# 1. 定义通达信安装根目录
-tdx_install_path = r"D:\new_tdx64"  # 请修改为你自己的通达信路径
-
-# 2. 拼接出 PYPlugins/user 的绝对路径
+tdx_install_path = r"D:\new_tdx64"
 pyplugins_user_path = os.path.join(tdx_install_path, "PYPlugins", "user")
-
-# 3. 将该路径插入到 sys.path 的第一位，确保优先加载
 sys.path.insert(0, pyplugins_user_path)
 
-# 4. 现在可以愉快地导入了
 from tqcenter import tq
 
-from config import DB_CONNECTION_STRING
+DB_CONFIG = {
+    'host': '127.0.0.1',
+    'port': 5432,
+    'user': 'ivydata',
+    'password': 'jcXz3rPjWrHY8MKF',
+    'database': 'ivydata'
+}
+
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.txt')
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
 LOG_FILE = os.path.join(LOG_DIR, f'grab_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
 
 
+def get_db_connection():
+    return psycopg2.connect(**DB_CONFIG)
+
+
 def ensure_log_dir():
-    """确保日志目录存在"""
     if not os.path.exists(LOG_DIR):
         os.makedirs(LOG_DIR)
 
 
 def log(message, end='\n'):
-    """输出日志到控制台和日志文件"""
     print(message, end=end)
     ensure_log_dir()
     with open(LOG_FILE, 'a', encoding='utf-8') as f:
@@ -42,19 +47,16 @@ def log(message, end='\n'):
 
 
 def print_error(message):
-    """打印错误信息"""
     log(f"\n{'='*50}")
     log(f"错误: {message}")
     log(f"{'='*50}\n")
 
 
 def print_warning(message):
-    """打印警告信息"""
     log(f"\n警告: {message}\n")
 
 
 def get_config_value():
-    """读取配置文件中的is_run值"""
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             for line in f:
@@ -69,71 +71,63 @@ def get_config_value():
 
 
 def init_db():
-    """初始化数据库和表"""
-    try:
-        conn = psycopg2.connect(DB_CONNECTION_STRING)
-        cursor = conn.cursor()
-    except Exception as e:
-        print_error(f"无法连接数据库: {DB_CONNECTION_STRING}\n详细信息: {e}")
-        raise SystemExit(1)
-
-    try:
-        create_day_k_sql = """
-        CREATE TABLE IF NOT EXISTS t_day_k (
-            code VARCHAR,
-            date DATE,
-            open DOUBLE PRECISION,
-            high DOUBLE PRECISION,
-            low DOUBLE PRECISION,
-            close DOUBLE PRECISION,
-            volume DOUBLE PRECISION,
-            amount DOUBLE PRECISION,
-            PRIMARY KEY (code, date)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kline_data (
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(20) NOT NULL,
+            date DATE NOT NULL,
+            open NUMERIC(18, 4) NOT NULL,
+            high NUMERIC(18, 4) NOT NULL,
+            low NUMERIC(18, 4) NOT NULL,
+            close NUMERIC(18, 4) NOT NULL,
+            volume BIGINT NOT NULL,
+            amount NUMERIC(18, 4) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(code, date)
         )
-        """
-        cursor.execute(create_day_k_sql)
-
-        create_grab_record_sql = """
-        CREATE TABLE IF NOT EXISTS t_grab_record (
-            code VARCHAR PRIMARY KEY,
+    """)
+    
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS grab_record (
+            code VARCHAR(20) PRIMARY KEY,
             start_time TIMESTAMP,
             end_time TIMESTAMP
         )
-        """
-        cursor.execute(create_grab_record_sql)
-
-        conn.commit()
-        cursor.close()
-        log("数据库表初始化完成")
-        return conn
-    except Exception as e:
-        print_error(f"初始化数据库表失败\n详细信息: {e}")
-        cursor.close()
-        conn.close()
-        raise SystemExit(1)
+    """)
+    
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_kline_code ON kline_data(code)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_kline_date ON kline_data(date)")
+    
+    conn.commit()
+    cur.close()
+    log("数据库表初始化完成")
+    return conn
 
 
 def get_all_codes(conn):
-    """获取所有代码列表，包括需要首次抓取和需要增量更新的代码"""
     try:
-        cursor = conn.cursor()
-        sql = """
-        SELECT b.code, b.code_converted, g.code as grabbed
-        FROM t_base b
-        LEFT JOIN t_grab_record g ON b.code = g.code
-        ORDER BY b.stock_or_fund, b.code
-        """
-        cursor.execute(sql)
-        result = cursor.fetchall()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT code, code_converted FROM base_data ORDER BY stock_or_fund, code
+        """)
+        result = cur.fetchall()
+        
+        cur.execute("SELECT code FROM grab_record")
+        grabbed_codes = set(row[0] for row in cur.fetchall())
+        
         codes = []
         for row in result:
-            code, code_converted, grabbed = row
+            code, code_converted = row
             codes.append({
                 'code': code,
                 'code_converted': code_converted,
-                'is_new': grabbed is None
+                'is_new': code not in grabbed_codes
             })
-        cursor.close()
+        
+        cur.close()
         return codes
     except Exception as e:
         print_error(f"查询代码列表失败\n详细信息: {e}")
@@ -141,9 +135,6 @@ def get_all_codes(conn):
 
 
 def get_day_k_data(stock_code, stock_code_full, start_date=''):
-    """从通达信获取日K线数据
-    start_date: 开始日期，格式为YYYY-MM-DD，为空表示获取全部历史数据
-    """
     try:
         raw_data = tq.get_market_data(
             field_list=[],
@@ -172,7 +163,6 @@ def get_day_k_data(stock_code, stock_code_full, start_date=''):
             return None, "数据为空"
 
         dates = first_df.index
-
         stock_columns = first_df.columns.tolist()
         actual_code = stock_columns[0] if stock_columns else stock_code_full
 
@@ -193,90 +183,82 @@ def get_day_k_data(stock_code, stock_code_full, start_date=''):
 
 
 def save_day_k_data(conn, df, code, incremental=True):
-    """保存K线数据到数据库
-    incremental: True表示增量模式，只插入新数据；False表示全量替换
-    """
     if df is None or len(df) == 0:
         return 0, None
 
+    cur = conn.cursor()
     try:
-        cursor = conn.cursor()
+        df['date'] = pd.to_datetime(df['date']).dt.date
+        
         if incremental:
-            # 获取已有的日期
-            existing_dates = set()
-            cursor.execute("SELECT date FROM t_day_k WHERE code = %s", (code,))
-            result = cursor.fetchall()
-            for row in result:
-                existing_dates.add(row[0])
-
-            # 只保留新数据
-            df['date'] = pd.to_datetime(df['date']).dt.date
+            cur.execute("SELECT date FROM kline_data WHERE code = %s", (code,))
+            existing_dates = set(row[0] for row in cur.fetchall())
             new_df = df[~df['date'].isin(existing_dates)]
-            
-            if len(new_df) > 0:
-                insert_query = """
-                    INSERT INTO t_day_k (code, date, open, high, low, close, volume, amount)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """
-                data = new_df[['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount']].values.tolist()
-                cursor.executemany(insert_query, data)
-                conn.commit()
-            count = len(new_df)
         else:
-            # 全量替换模式
-            cursor.execute("DELETE FROM t_day_k WHERE code = %s", (code,))
-            insert_query = """
-                INSERT INTO t_day_k (code, date, open, high, low, close, volume, amount)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            data = df[['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount']].values.tolist()
-            cursor.executemany(insert_query, data)
-            conn.commit()
-            count = len(df)
-        cursor.close()
+            cur.execute("DELETE FROM kline_data WHERE code = %s", (code,))
+            new_df = df
+
+        count = 0
+        for _, row in new_df.iterrows():
+            try:
+                cur.execute("""
+                    INSERT INTO kline_data (code, date, open, high, low, close, volume, amount)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (code, date) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume,
+                        amount = EXCLUDED.amount
+                """, (row['code'], row['date'], row['open'], row['high'], row['low'], row['close'], row['volume'], row['amount']))
+                count += 1
+            except Exception as e:
+                log(f"插入数据失败: {e}")
+
+        conn.commit()
         return count, None
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         return 0, error_msg
+    finally:
+        cur.close()
 
 
 def get_last_k_date(conn, code):
-    """获取某个代码的最后一条K线数据日期
-    返回: 日期字符串格式YYYY-MM-DD，如果没有数据则返回None
-    """
+    cur = conn.cursor()
     try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT MAX(date) FROM t_day_k WHERE code = %s", (code,))
-        result = cursor.fetchone()
-        cursor.close()
+        cur.execute("SELECT MAX(date) FROM kline_data WHERE code = %s", (code,))
+        result = cur.fetchone()
         if result and result[0]:
             return str(result[0])
         return None
     except Exception as e:
         return None
+    finally:
+        cur.close()
 
 
 def update_grab_record(conn, code, start_time, end_time):
-    """更新抓取记录"""
+    cur = conn.cursor()
     try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO t_grab_record (code, start_time, end_time)
+        cur.execute("""
+            INSERT INTO grab_record (code, start_time, end_time)
             VALUES (%s, %s, %s)
             ON CONFLICT (code) DO UPDATE SET
-            start_time = EXCLUDED.start_time,
-            end_time = EXCLUDED.end_time
+                start_time = EXCLUDED.start_time,
+                end_time = EXCLUDED.end_time
         """, (code, start_time, end_time))
         conn.commit()
-        cursor.close()
         return None
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         return error_msg
+    finally:
+        cur.close()
 
 
 def graceful_exit(conn, message):
-    """优雅退出程序"""
     print_error(message)
     if conn:
         try:
@@ -291,7 +273,6 @@ def graceful_exit(conn, message):
 
 
 def main():
-    """主函数"""
     log("=" * 50)
     log("K线数据增量抓取程序启动")
     log("=" * 50)
@@ -348,21 +329,15 @@ def main():
 
             start_time = datetime.now()
 
-            # 确定开始日期，通达信要求格式为YYYYMMDD
             start_date = ''
             last_date = ''
             if not is_new:
-                # 获取最后日期并加一天
-                result = conn.execute(f"SELECT MAX(date) FROM t_day_k WHERE code = '{code}'").fetchone()
-                if result and result[0]:
-                    last_date = result[0]
-                    # 加一天作为开始日期
-                    next_date = last_date + pd.Timedelta(days=1)
-                    # 转换为YYYYMMDD格式
+                last_date = get_last_k_date(conn, code)
+                if last_date:
+                    next_date = pd.to_datetime(last_date) + pd.Timedelta(days=1)
                     start_date = str(next_date).replace('-', '')
                     log(f"  上次抓取截止日期: {last_date}，从 {next_date} 开始增量获取")
             
-            # 使用通达信接口的日期过滤功能
             df, error = get_day_k_data(code, code_converted, start_date)
 
             if error and "初始化失败" in str(error):
@@ -396,21 +371,15 @@ def main():
                     success_count += 1
                 continue
 
-            # 验证数据完整性：使用交易日历检查
             if not is_new and start_date:
                 try:
-                    # 计算开始日期（YYYYMMDD转YYYY-MM-DD）
                     start_date_str = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
-                    # 获取应该有的交易日
                     expected_dates = get_trade_dates_since(start_date_str)
                     expected_count = len(expected_dates)
-                    
-                    # 计算实际获取的数据量
                     actual_count = len(df)
                     
                     log(f"  验证数据完整性: 预期 {expected_count} 个交易日，实际获取 {actual_count} 条数据")
                     
-                    # 如果数据不完整，退出程序
                     if actual_count != expected_count:
                         log(f"  数据不完整！预期 {expected_count} 条，实际 {actual_count} 条")
                         log(f"  请检查通达信本地数据是否完整")
@@ -421,7 +390,6 @@ def main():
                     log(f"  数据完整性验证失败: {e}")
                     graceful_exit(conn, f"数据完整性验证异常: {e}")
 
-            # 保存数据到数据库
             save_count, save_error = save_day_k_data(conn, df, code, incremental=True)
 
             if save_error:
@@ -432,7 +400,6 @@ def main():
                     log(f"  将在下次运行时重新尝试")
                 continue
 
-            # 无论是否是新代码，都更新抓取记录
             record_error = update_grab_record(conn, code, start_time, datetime.now())
             if record_error:
                 print_warning(f"更新抓取记录失败: {record_error}")
@@ -449,6 +416,10 @@ def main():
         log(f"失败: {fail_count} 个代码")
         log(f"新增K线记录: {total_new_records} 条")
         log("=" * 50)
+
+        print("\n___JSON_OUTPUT_START___")
+        print(json.dumps({"success": success_count, "fail": fail_count, "records": total_new_records}))
+        print("___JSON_OUTPUT_END___")
 
     except SystemExit:
         raise
@@ -476,4 +447,5 @@ def main():
 
 
 if __name__ == "__main__":
+    import json
     main()

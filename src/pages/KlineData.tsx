@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Search, Download, RefreshCw, PlayCircle, Calendar } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Brush } from 'recharts'
+import { Search, Download, RefreshCw, PlayCircle } from 'lucide-react'
+import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Brush } from 'recharts'
 
 interface KlineDataItem {
   code: string
@@ -19,7 +19,7 @@ export default function KlineData() {
   const [searchTerm, setSearchTerm] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(50)
+  const pageSize = 50
   const [selectedCode, setSelectedCode] = useState('600519')
   const [chartData, setChartData] = useState<KlineDataItem[]>([])
 
@@ -28,38 +28,14 @@ export default function KlineData() {
     const fetchKlineData = async () => {
       try {
         const response = await fetch(`/api/data/kline-data?code=${selectedCode}`)
-        const data = await response.json()
-        if (data.success) {
-          setChartData(data.data)
-          setData(data.data)
-          setFilteredData(data.data)
-        } else {
-          console.error('获取K线数据失败:', data.message)
-          // 使用模拟数据作为 fallback
-          const mockData: KlineDataItem[] = [
-            { code: selectedCode, date: '2026-04-14', open: 1800, high: 1820, low: 1790, close: 1810, volume: 1000000, amount: 1810000000 },
-            { code: selectedCode, date: '2026-04-13', open: 1780, high: 1800, low: 1770, close: 1790, volume: 900000, amount: 1611000000 },
-            { code: selectedCode, date: '2026-04-12', open: 1760, high: 1780, low: 1750, close: 1780, volume: 800000, amount: 1424000000 },
-            { code: selectedCode, date: '2026-04-11', open: 1740, high: 1760, low: 1730, close: 1760, volume: 700000, amount: 1232000000 },
-            { code: selectedCode, date: '2026-04-10', open: 1720, high: 1740, low: 1710, close: 1740, volume: 600000, amount: 1044000000 }
-          ]
-          setChartData(mockData)
-          setData(mockData)
-          setFilteredData(mockData)
+        const result = await response.json()
+        if (result.success) {
+          setChartData(result.data)
+          setData(result.data)
+          setFilteredData(result.data)
         }
       } catch (error) {
-        console.error('调用API失败:', error)
-        // 使用模拟数据作为 fallback
-        const mockData: KlineDataItem[] = [
-          { code: selectedCode, date: '2026-04-14', open: 1800, high: 1820, low: 1790, close: 1810, volume: 1000000, amount: 1810000000 },
-          { code: selectedCode, date: '2026-04-13', open: 1780, high: 1800, low: 1770, close: 1790, volume: 900000, amount: 1611000000 },
-          { code: selectedCode, date: '2026-04-12', open: 1760, high: 1780, low: 1750, close: 1780, volume: 800000, amount: 1424000000 },
-          { code: selectedCode, date: '2026-04-11', open: 1740, high: 1760, low: 1730, close: 1760, volume: 700000, amount: 1232000000 },
-          { code: selectedCode, date: '2026-04-10', open: 1720, high: 1740, low: 1710, close: 1740, volume: 600000, amount: 1044000000 }
-        ]
-        setChartData(mockData)
-        setData(mockData)
-        setFilteredData(mockData)
+        console.error('获取K线数据失败:', error)
       }
     }
 
@@ -212,7 +188,7 @@ export default function KlineData() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {paginatedData.map((item, index) => (
+              {paginatedData.map((item) => (
                 <tr 
                   key={`${item.code}-${item.date}`}
                   onClick={() => handleCodeChange(item.code)}

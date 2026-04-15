@@ -31,32 +31,17 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        // 这里应该从API获取实际数据
-        // 暂时使用模拟数据
-        setTimeout(() => {
+        const response = await fetch('/api/data/stats')
+        const result = await response.json()
+        if (result.success) {
           setStatus({
-            stockCount: 5491,
-            fundCount: 1438,
-            lastBaseDataFetch: '2026-04-14 10:00:00',
-            lastKlineDataFetch: '2026-04-14 11:00:00',
-            tasks: [
-              {
-                id: '1',
-                type: 'base-data',
-                status: 'completed',
-                startTime: '2026-04-14 10:00:00',
-                endTime: '2026-04-14 10:05:00'
-              },
-              {
-                id: '2',
-                type: 'kline-data',
-                status: 'completed',
-                startTime: '2026-04-14 11:00:00',
-                endTime: '2026-04-14 11:30:00'
-              }
-            ]
+            stockCount: result.data.stockCount,
+            fundCount: result.data.fundCount,
+            lastBaseDataFetch: result.data.lastBaseDataFetch || '从未',
+            lastKlineDataFetch: result.data.lastKlineDataFetch || '从未',
+            tasks: []
           })
-        }, 1000)
+        }
       } catch (error) {
         console.error('获取状态数据失败:', error)
       }

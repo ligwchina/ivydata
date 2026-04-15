@@ -1,5 +1,5 @@
 import akshare as ak
-import psycopg2
+import duckdb
 import os
 import sys
 import requests
@@ -8,7 +8,7 @@ from io import StringIO
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from code_converter import convert_code, get_exchange, is_a_stock, is_fund
-from config import DB_CONNECTION_STRING
+from config import DB_PATH
 
 
 def get_all_stocks():
@@ -45,8 +45,7 @@ def get_all_funds():
 
 def init_db():
     """初始化数据库和表"""
-    conn = psycopg2.connect(DB_CONNECTION_STRING)
-    cursor = conn.cursor()
+    conn = duckdb.connect(DB_PATH)
 
     create_table_sql = """
     CREATE TABLE IF NOT EXISTS t_base (
@@ -57,9 +56,8 @@ def init_db():
         stock_or_fund INTEGER
     )
     """
-    cursor.execute(create_table_sql)
+    conn.execute(create_table_sql)
     conn.commit()
-    cursor.close()
     print("数据库和表创建完成")
     return conn
 
@@ -79,9 +77,7 @@ def insert_stocks(conn, incremental=True):
 
     # 获取数据库中已有的股票代码
     existing_codes = set()
-    cursor = conn.cursor()
-    cursor.execute("SELECT code FROM t_base WHERE stock_or_fund = 1")
-    result = cursor.fetchall()
+    result = conn.execute("SELECT code FROM t_base WHERE stock_or_fund = 1").fetchall()
     for row in result:
         existing_codes.add(row[0])
 
@@ -95,37 +91,35 @@ def insert_stocks(conn, incremental=True):
     if incremental:
         # 增量模式：添加新数据，更新已有数据
         if len(new_df) > 0:
-            insert_query = """
-                INSERT INTO t_base (code, name, code_converted, exchange, stock_or_fund)
-                VALUES (%s, %s, %s, %s, %s)
-            """
-            data = new_df[['code', 'name', 'code_converted', 'exchange', 'stock_or_fund']].values.tolist()
-            cursor.executemany(insert_query, data)
+            # 使用DuckDB的insert语句
+            for _, row in new_df.iterrows():
+                conn.execute('''
+                    INSERT INTO t_base (code, name, code_converted, exchange, stock_or_fund)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', [row['code'], row['name'], row['code_converted'], row['exchange'], row['stock_or_fund']])
             conn.commit()
             added_count = len(new_df)
 
         if len(update_df) > 0:
-            update_query = """
-                UPDATE t_base 
-                SET name = %s, code_converted = %s, exchange = %s
-                WHERE code = %s AND stock_or_fund = 1
-            """
-            data = update_df[['name', 'code_converted', 'exchange', 'code']].values.tolist()
-            cursor.executemany(update_query, data)
+            # 使用DuckDB的update语句
+            for _, row in update_df.iterrows():
+                conn.execute('''
+                    UPDATE t_base 
+                    SET name = ?, code_converted = ?, exchange = ?
+                    WHERE code = ? AND stock_or_fund = 1
+                ''', [row['name'], row['code_converted'], row['exchange'], row['code']])
             conn.commit()
             updated_count = len(update_df)
     else:
         # 全量模式：先删除所有，再插入
-        cursor.execute("DELETE FROM t_base WHERE stock_or_fund = 1")
-        insert_query = """
-            INSERT INTO t_base (code, name, code_converted, exchange, stock_or_fund)
-            VALUES (%s, %s, %s, %s, %s)
-        """
-        data = stock_df[['code', 'name', 'code_converted', 'exchange', 'stock_or_fund']].values.tolist()
-        cursor.executemany(insert_query, data)
+        conn.execute("DELETE FROM t_base WHERE stock_or_fund = 1")
+        for _, row in stock_df.iterrows():
+            conn.execute('''
+                INSERT INTO t_base (code, name, code_converted, exchange, stock_or_fund)
+                VALUES (?, ?, ?, ?, ?)
+            ''', [row['code'], row['name'], row['code_converted'], row['exchange'], row['stock_or_fund']])
         conn.commit()
         added_count = len(stock_df)
-    cursor.close()
 
     print(f"股票数据 - 新增: {added_count}条, 更新: {updated_count}条")
     return added_count, updated_count
@@ -158,9 +152,7 @@ def insert_funds(conn, incremental=True):
 
     # 获取数据库中已有的基金代码
     existing_codes = set()
-    cursor = conn.cursor()
-    cursor.execute("SELECT code FROM t_base WHERE stock_or_fund = 2")
-    result = cursor.fetchall()
+    result = conn.execute("SELECT code FROM t_base WHERE stock_or_fund = 2").fetchall()
     for row in result:
         existing_codes.add(row[0])
 
@@ -174,37 +166,35 @@ def insert_funds(conn, incremental=True):
     if incremental:
         # 增量模式：添加新数据，更新已有数据
         if len(new_df) > 0:
-            insert_query = """
-                INSERT INTO t_base (code, name, code_converted, exchange, stock_or_fund)
-                VALUES (%s, %s, %s, %s, %s)
-            """
-            data = new_df[['code', 'name', 'code_converted', 'exchange', 'stock_or_fund']].values.tolist()
-            cursor.executemany(insert_query, data)
+            # 使用DuckDB的insert语句
+            for _, row in new_df.iterrows():
+                conn.execute('''
+                    INSERT INTO t_base (code, name, code_converted, exchange, stock_or_fund)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', [row['code'], row['name'], row['code_converted'], row['exchange'], row['stock_or_fund']])
             conn.commit()
             added_count = len(new_df)
 
         if len(update_df) > 0:
-            update_query = """
-                UPDATE t_base 
-                SET name = %s, code_converted = %s, exchange = %s
-                WHERE code = %s AND stock_or_fund = 2
-            """
-            data = update_df[['name', 'code_converted', 'exchange', 'code']].values.tolist()
-            cursor.executemany(update_query, data)
+            # 使用DuckDB的update语句
+            for _, row in update_df.iterrows():
+                conn.execute('''
+                    UPDATE t_base 
+                    SET name = ?, code_converted = ?, exchange = ?
+                    WHERE code = ? AND stock_or_fund = 2
+                ''', [row['name'], row['code_converted'], row['exchange'], row['code']])
             conn.commit()
             updated_count = len(update_df)
     else:
         # 全量模式：先删除所有，再插入
-        cursor.execute("DELETE FROM t_base WHERE stock_or_fund = 2")
-        insert_query = """
-            INSERT INTO t_base (code, name, code_converted, exchange, stock_or_fund)
-            VALUES (%s, %s, %s, %s, %s)
-        """
-        data = fund_df[['code', 'name', 'code_converted', 'exchange', 'stock_or_fund']].values.tolist()
-        cursor.executemany(insert_query, data)
+        conn.execute("DELETE FROM t_base WHERE stock_or_fund = 2")
+        for _, row in fund_df.iterrows():
+            conn.execute('''
+                INSERT INTO t_base (code, name, code_converted, exchange, stock_or_fund)
+                VALUES (?, ?, ?, ?, ?)
+            ''', [row['code'], row['name'], row['code_converted'], row['exchange'], row['stock_or_fund']])
         conn.commit()
         added_count = len(fund_df)
-    cursor.close()
 
     print(f"基金数据 - 新增: {added_count}条, 更新: {updated_count}条")
     return added_count, updated_count
@@ -224,28 +214,22 @@ def main(incremental=True):
     stock_added, stock_updated = insert_stocks(conn, incremental)
     fund_added, fund_updated = insert_funds(conn, incremental)
 
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM t_base")
-    result = cursor.fetchone()
+    result = conn.execute("SELECT COUNT(*) FROM t_base").fetchone()
     print(f"\n表中总数据量: {result[0]}")
 
-    cursor.execute("SELECT COUNT(*) FROM t_base WHERE stock_or_fund = 1")
-    stock_result = cursor.fetchone()
-    cursor.execute("SELECT COUNT(*) FROM t_base WHERE stock_or_fund = 2")
-    fund_result = cursor.fetchone()
+    stock_result = conn.execute("SELECT COUNT(*) FROM t_base WHERE stock_or_fund = 1").fetchone()
+    fund_result = conn.execute("SELECT COUNT(*) FROM t_base WHERE stock_or_fund = 2").fetchone()
     print(f"股票数量: {stock_result[0]}, 基金数量: {fund_result[0]}")
 
     print(f"\n更新统计:")
     print(f"  股票 - 新增: {stock_added}, 更新: {stock_updated}")
     print(f"  基金 - 新增: {fund_added}, 更新: {fund_updated}")
 
-    cursor.execute("SELECT * FROM t_base ORDER BY stock_or_fund, code LIMIT 5")
-    sample = cursor.fetchall()
+    sample = conn.execute("SELECT * FROM t_base ORDER BY stock_or_fund, code LIMIT 5").fetchall()
     print("\n示例数据:")
     for row in sample:
         print(f"  {row}")
 
-    cursor.close()
     conn.close()
     print("\n数据更新完成!")
 

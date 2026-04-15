@@ -1,6 +1,6 @@
 import os
 import sys
-import duckdb
+import psycopg2
 import pandas as pd
 from datetime import datetime
 import traceback
@@ -21,7 +21,7 @@ sys.path.insert(0, pyplugins_user_path)
 # 4. 现在可以愉快地导入了
 from tqcenter import tq
 
-DB_PATH = r'D:\dev\ai\ivydata\db\ivy.duckdb'
+from config import DB_CONNECTION_STRING
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.txt')
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
 LOG_FILE = os.path.join(LOG_DIR, f'grab_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
@@ -71,9 +71,10 @@ def get_config_value():
 def init_db():
     """初始化数据库和表"""
     try:
-        conn = duckdb.connect(DB_PATH)
+        conn = psycopg2.connect(DB_CONNECTION_STRING)
+        cursor = conn.cursor()
     except Exception as e:
-        print_error(f"无法连接数据库: {DB_PATH}\n详细信息: {e}")
+        print_error(f"无法连接数据库: {DB_CONNECTION_STRING}\n详细信息: {e}")
         raise SystemExit(1)
 
     try:
@@ -81,16 +82,16 @@ def init_db():
         CREATE TABLE IF NOT EXISTS t_day_k (
             code VARCHAR,
             date DATE,
-            open DOUBLE,
-            high DOUBLE,
-            low DOUBLE,
-            close DOUBLE,
-            volume DOUBLE,
-            amount DOUBLE,
+            open DOUBLE PRECISION,
+            high DOUBLE PRECISION,
+            low DOUBLE PRECISION,
+            close DOUBLE PRECISION,
+            volume DOUBLE PRECISION,
+            amount DOUBLE PRECISION,
             PRIMARY KEY (code, date)
         )
         """
-        conn.execute(create_day_k_sql)
+        cursor.execute(create_day_k_sql)
 
         create_grab_record_sql = """
         CREATE TABLE IF NOT EXISTS t_grab_record (
@@ -99,12 +100,15 @@ def init_db():
             end_time TIMESTAMP
         )
         """
-        conn.execute(create_grab_record_sql)
+        cursor.execute(create_grab_record_sql)
 
+        conn.commit()
+        cursor.close()
         log("数据库表初始化完成")
         return conn
     except Exception as e:
         print_error(f"初始化数据库表失败\n详细信息: {e}")
+        cursor.close()
         conn.close()
         raise SystemExit(1)
 
@@ -112,13 +116,15 @@ def init_db():
 def get_all_codes(conn):
     """获取所有代码列表，包括需要首次抓取和需要增量更新的代码"""
     try:
+        cursor = conn.cursor()
         sql = """
         SELECT b.code, b.code_converted, g.code as grabbed
         FROM t_base b
         LEFT JOIN t_grab_record g ON b.code = g.code
         ORDER BY b.stock_or_fund, b.code
         """
-        result = conn.execute(sql).fetchall()
+        cursor.execute(sql)
+        result = cursor.fetchall()
         codes = []
         for row in result:
             code, code_converted, grabbed = row
@@ -127,6 +133,7 @@ def get_all_codes(conn):
                 'code_converted': code_converted,
                 'is_new': grabbed is None
             })
+        cursor.close()
         return codes
     except Exception as e:
         print_error(f"查询代码列表失败\n详细信息: {e}")
@@ -193,10 +200,12 @@ def save_day_k_data(conn, df, code, incremental=True):
         return 0, None
 
     try:
+        cursor = conn.cursor()
         if incremental:
             # 获取已有的日期
             existing_dates = set()
-            result = conn.execute(f"SELECT date FROM t_day_k WHERE code = '{code}'").fetchall()
+            cursor.execute("SELECT date FROM t_day_k WHERE code = %s", (code,))
+            result = cursor.fetchall()
             for row in result:
                 existing_dates.add(row[0])
 
@@ -205,24 +214,26 @@ def save_day_k_data(conn, df, code, incremental=True):
             new_df = df[~df['date'].isin(existing_dates)]
             
             if len(new_df) > 0:
-                conn.register('k_data', new_df)
-                conn.execute("""
+                insert_query = """
                     INSERT INTO t_day_k (code, date, open, high, low, close, volume, amount)
-                    SELECT code, date, open, high, low, close, volume, amount FROM k_data
-                """)
-                conn.unregister('k_data')
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                data = new_df[['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount']].values.tolist()
+                cursor.executemany(insert_query, data)
+                conn.commit()
             count = len(new_df)
         else:
             # 全量替换模式
-            conn.execute(f"DELETE FROM t_day_k WHERE code = '{code}'")
-            conn.register('k_data', df)
-            conn.execute("""
+            cursor.execute("DELETE FROM t_day_k WHERE code = %s", (code,))
+            insert_query = """
                 INSERT INTO t_day_k (code, date, open, high, low, close, volume, amount)
-                SELECT code, date, open, high, low, close, volume, amount FROM k_data
-            """)
-            conn.unregister('k_data')
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            data = df[['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount']].values.tolist()
+            cursor.executemany(insert_query, data)
+            conn.commit()
             count = len(df)
-
+        cursor.close()
         return count, None
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
@@ -234,9 +245,10 @@ def get_last_k_date(conn, code):
     返回: 日期字符串格式YYYY-MM-DD，如果没有数据则返回None
     """
     try:
-        result = conn.execute(f"""
-            SELECT MAX(date) FROM t_day_k WHERE code = '{code}'
-        """).fetchone()
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(date) FROM t_day_k WHERE code = %s", (code,))
+        result = cursor.fetchone()
+        cursor.close()
         if result and result[0]:
             return str(result[0])
         return None
@@ -247,10 +259,16 @@ def get_last_k_date(conn, code):
 def update_grab_record(conn, code, start_time, end_time):
     """更新抓取记录"""
     try:
-        conn.execute("""
-            INSERT OR REPLACE INTO t_grab_record (code, start_time, end_time)
-            VALUES (?, ?, ?)
-        """, [code, start_time, end_time])
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO t_grab_record (code, start_time, end_time)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (code) DO UPDATE SET
+            start_time = EXCLUDED.start_time,
+            end_time = EXCLUDED.end_time
+        """, (code, start_time, end_time))
+        conn.commit()
+        cursor.close()
         return None
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"

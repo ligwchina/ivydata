@@ -1,34 +1,31 @@
-import duckdb
+import psycopg2
 import json
 import sys
 import os
+from config import DB_CONNECTION_STRING
 
 try:
-    # 获取当前脚本所在目录
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # 数据库文件路径
-    db_path = os.path.join(script_dir, '..', 'stock_data.duckdb')
-    
-    # 连接到DuckDB数据库
-    con = duckdb.connect(db_path)
+    # 连接到PostgreSQL数据库
+    con = psycopg2.connect(DB_CONNECTION_STRING)
 
     # 检查base_data表是否存在
-    table_exists = con.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'base_data';").fetchone()
+    cursor = con.cursor()
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'base_data';")
+    table_exists = cursor.fetchone()
 
     if not table_exists:
         # 如果表不存在，创建表
-        con.execute('''
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS base_data (
-            code VARCHAR,
+            code VARCHAR PRIMARY KEY,
             name VARCHAR,
             code_converted VARCHAR,
             exchange VARCHAR,
-            stock_or_fund VARCHAR,
-            PRIMARY KEY (code)
+            stock_or_fund VARCHAR
         )
         ''')
         # 插入一些模拟数据
-        con.execute('''
+        insert_query = '''
         INSERT INTO base_data (code, name, code_converted, exchange, stock_or_fund)
         VALUES 
         ('600519', '贵州茅台', 'sh600519', 'SH', 'stock'),
@@ -38,13 +35,16 @@ try:
         ('510300', '沪深300ETF', 'sh510300', 'SH', 'fund'),
         ('159915', '创业板ETF', 'sz159915', 'SZ', 'fund')
         ''')
+        cursor.execute(insert_query)
+        con.commit()
 
     # 查询基础数据
-    result = con.execute('''
+    cursor.execute('''
         SELECT code, name, code_converted, exchange, stock_or_fund 
         FROM base_data 
         ORDER BY stock_or_fund, code
-    ''').fetchall()
+    ''')
+    result = cursor.fetchall()
 
     # 转换为JSON格式
     base_data = []
@@ -63,7 +63,8 @@ try:
         sys.stdout.reconfigure(encoding='utf-8')
     print(json.dumps(base_data, ensure_ascii=False))
 
-    # 关闭连接
+    # 关闭游标和连接
+    cursor.close()
     con.close()
 except Exception as e:
     print(f"Error: {str(e)}", file=sys.stderr)

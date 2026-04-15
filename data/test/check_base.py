@@ -1,47 +1,47 @@
-import psycopg2
+import duckdb
 import json
 import sys
 import os
-from config import DB_CONNECTION_STRING
+from config import DB_PATH
 
 try:
-    # 连接到PostgreSQL数据库
-    con = psycopg2.connect(DB_CONNECTION_STRING)
+    # 连接到DuckDB数据库
+    con = duckdb.connect(DB_PATH)
 
-    # 检查base_data表是否存在
+    # 检查t_base表是否存在
     cursor = con.cursor()
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'base_data';")
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='t_base';")
     table_exists = cursor.fetchone()
 
     if not table_exists:
         # 如果表不存在，创建表
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS base_data (
+        CREATE TABLE IF NOT EXISTS t_base (
             code VARCHAR PRIMARY KEY,
             name VARCHAR,
             code_converted VARCHAR,
             exchange VARCHAR,
-            stock_or_fund VARCHAR
+            stock_or_fund INTEGER
         )
         ''')
         # 插入一些模拟数据
         insert_query = '''
-        INSERT INTO base_data (code, name, code_converted, exchange, stock_or_fund)
+        INSERT INTO t_base (code, name, code_converted, exchange, stock_or_fund)
         VALUES 
-        ('600519', '贵州茅台', 'sh600519', 'SH', 'stock'),
-        ('000858', '五粮液', 'sz000858', 'SZ', 'stock'),
-        ('000001', '平安银行', 'sz000001', 'SZ', 'stock'),
-        ('000002', '万科A', 'sz000002', 'SZ', 'stock'),
-        ('510300', '沪深300ETF', 'sh510300', 'SH', 'fund'),
-        ('159915', '创业板ETF', 'sz159915', 'SZ', 'fund')
-        ''')
+        ('600519', '贵州茅台', '600519.SH', 'SH', 1),
+        ('000858', '五粮液', '000858.SZ', 'SZ', 1),
+        ('000001', '平安银行', '000001.SZ', 'SZ', 1),
+        ('000002', '万科A', '000002.SZ', 'SZ', 1),
+        ('510300', '沪深300ETF', '510300.SH', 'SH', 2),
+        ('159915', '创业板ETF', '159915.SZ', 'SZ', 2)
+        '''
         cursor.execute(insert_query)
         con.commit()
 
     # 查询基础数据
     cursor.execute('''
         SELECT code, name, code_converted, exchange, stock_or_fund 
-        FROM base_data 
+        FROM t_base 
         ORDER BY stock_or_fund, code
     ''')
     result = cursor.fetchall()
@@ -63,8 +63,7 @@ try:
         sys.stdout.reconfigure(encoding='utf-8')
     print(json.dumps(base_data, ensure_ascii=False))
 
-    # 关闭游标和连接
-    cursor.close()
+    # 关闭连接
     con.close()
 except Exception as e:
     print(f"Error: {str(e)}", file=sys.stderr)

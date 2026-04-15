@@ -1,38 +1,37 @@
-import psycopg2
+import duckdb
 import json
 import sys
 import os
-from config import DB_CONNECTION_STRING
+from config import DB_PATH
 
 try:
     # 获取命令行参数中的股票代码
     code = sys.argv[1] if len(sys.argv) > 1 else '600519'
 
-    # 连接到PostgreSQL数据库
-    con = psycopg2.connect(DB_CONNECTION_STRING)
+    # 连接到DuckDB数据库
+    con = duckdb.connect(DB_PATH)
 
     # 检查day_k_data表是否存在
-    cursor = con.cursor()
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'day_k_data';")
-    table_exists = cursor.fetchone()
+    result = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='day_k_data';").fetchall()
+    table_exists = len(result) > 0
 
     if not table_exists:
         # 如果表不存在，创建表
-        cursor.execute('''
+        con.execute('''
         CREATE TABLE IF NOT EXISTS day_k_data (
             code VARCHAR,
             date DATE,
-            open DOUBLE PRECISION,
-            high DOUBLE PRECISION,
-            low DOUBLE PRECISION,
-            close DOUBLE PRECISION,
-            volume DOUBLE PRECISION,
-            amount DOUBLE PRECISION,
+            open DOUBLE,
+            high DOUBLE,
+            low DOUBLE,
+            close DOUBLE,
+            volume DOUBLE,
+            amount DOUBLE,
             PRIMARY KEY (code, date)
         )
         ''')
         # 插入一些模拟数据
-        insert_query = '''
+        con.execute('''
         INSERT INTO day_k_data (code, date, open, high, low, close, volume, amount)
         VALUES 
         ('600519', '2026-04-14', 1800, 1820, 1790, 1810, 1000000, 1810000000),
@@ -46,18 +45,16 @@ try:
         ('000858', '2026-04-11', 154, 156, 153, 156, 1400000, 2184000000),
         ('000858', '2026-04-10', 152, 154, 151, 154, 1200000, 1848000000)
         ''')
-        cursor.execute(insert_query)
         con.commit()
 
     # 查询K线数据
-    cursor.execute('''
+    result = con.execute('''
         SELECT code, date, open, high, low, close, volume, amount 
         FROM day_k_data 
-        WHERE code = %s 
+        WHERE code = ? 
         ORDER BY date DESC
         LIMIT 50
-    ''', (code,))
-    result = cursor.fetchall()
+    ''', [code]).fetchall()
 
     # 转换为JSON格式
     kline_data = []
@@ -79,8 +76,7 @@ try:
         sys.stdout.reconfigure(encoding='utf-8')
     print(json.dumps(kline_data, ensure_ascii=False))
 
-    # 关闭游标和连接
-    cursor.close()
+    # 关闭连接
     con.close()
 except Exception as e:
     print(f"Error: {str(e)}", file=sys.stderr)

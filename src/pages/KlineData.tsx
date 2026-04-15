@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Search, Download, RefreshCw, PlayCircle, Calendar } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Zoom } from 'recharts'
 
 interface KlineDataItem {
   code: string
@@ -188,6 +188,7 @@ export default function KlineData() {
               <XAxis dataKey="date" />
               <YAxis />
               <Tooltip />
+              <Zoom />
               <Area type="monotone" dataKey="close" stroke="#1e40af" fill="#dbeafe" />
             </AreaChart>
           </ResponsiveContainer>
@@ -212,7 +213,11 @@ export default function KlineData() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {paginatedData.map((item, index) => (
-                <tr key={`${item.code}-${item.date}`}>
+                <tr 
+                  key={`${item.code}-${item.date}`}
+                  onClick={() => handleCodeChange(item.code)}
+                  className="cursor-pointer hover:bg-gray-50 transition-colors"
+                >
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{item.code}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.date}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.open.toFixed(2)}</td>

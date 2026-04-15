@@ -72,7 +72,10 @@ try:
             'amount': float(row[7])
         })
 
-    # 输出JSON
+    # 输出JSON，确保正确编码
+    import sys
+    if sys.version_info >= (3, 7):
+        sys.stdout.reconfigure(encoding='utf-8')
     print(json.dumps(kline_data, ensure_ascii=False))
 
     # 关闭连接

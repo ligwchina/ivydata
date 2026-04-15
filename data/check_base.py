@@ -57,7 +57,10 @@ try:
             'stock_or_fund': row[4]
         })
 
-    # 输出JSON
+    # 输出JSON，确保正确编码
+    import sys
+    if sys.version_info >= (3, 7):
+        sys.stdout.reconfigure(encoding='utf-8')
     print(json.dumps(base_data, ensure_ascii=False))
 
     # 关闭连接

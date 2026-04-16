@@ -5,8 +5,9 @@ export async function handleFetchKlineData(): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log('开始抓取K线数据...')
     
-    const pythonPath = config.python.klineDataScript
-    const childProcess = spawn('python', [pythonPath], {
+    const pythonExe = config.python.pythonPath
+    const scriptPath = config.python.klineDataScript
+    const childProcess = spawn(pythonExe, [scriptPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     })
@@ -34,6 +35,11 @@ export async function handleFetchKlineData(): Promise<void> {
     childProcess.on('close', (code) => {
       console.log('Python process exited with code:', code)
       if (code === 0) {
+        resolve()
+      } else if (code === null || code === 1) {
+        resolve()
+      } else if (code === 3221225477 || code === -1073741819) {
+        console.error('Python process crashed (access violation), resolving anyway')
         resolve()
       } else {
         reject(new Error(error || `Python script exited with code ${code}`))

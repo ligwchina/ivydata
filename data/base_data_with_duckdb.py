@@ -11,6 +11,8 @@ import psycopg2
 from psycopg2.extras import execute_values
 import pandas as pd
 import akshare as ak
+import requests
+from io import StringIO
 from datetime import datetime
 import traceback
 
@@ -109,26 +111,44 @@ def fetch_stock_info():
         return []
 
 
-def fetch_fund_info():
-    """获取场内基金列表"""
+def get_all_funds():
     try:
-        log("正在获取场内基金列表...")
-        
-        fund_etf_spot_ths_df = ak.fund_etf_spot_ths(symbol="ETF基金")
-        fund_list = []
-        
-        if fund_etf_spot_ths_df is not None and len(fund_etf_spot_ths_df) > 0:
-            for _, row in fund_etf_spot_ths_df.iterrows():
-                fund_list.append({
-                    'code': str(row.get('代码', '')),
-                    'name': str(row.get('名称', ''))
-                })
-        
-        log(f"成功获取 {len(fund_list)} 只场内基金信息")
-        return fund_list
+        log("正在获取基金列表...")
+        from akshare.utils.cons import headers
+        url = "https://fund.eastmoney.com/cnjy_jzzzl.html"
+        r = requests.get(url, headers=headers, timeout=30)
+        r.encoding = "gb2312"
+        temp_df = pd.read_html(StringIO(r.text))[1]
+        temp_df = temp_df.iloc[2:].copy()
+        temp_df = temp_df[[3, 4, 5]].reset_index(drop=True)
+        temp_df.columns = ["基金代码", "基金简称", "类型"]
+        temp_df["基金简称"] = temp_df["基金简称"].str.replace("行情吧档案", "")
+        log(f"成功获取{len(temp_df)}只基金列表")
+        return temp_df
     except Exception as e:
-        print_error(f"获取场内基金列表失败\n详细信息: {e}")
+        log(f"获取基金列表失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def fetch_fund_info():
+    """获取基金列表"""
+    fund_df = get_all_funds()
+    if fund_df is None:
         return []
+    
+    fund_list = []
+    fund_codes = set()
+    for _, row in fund_df.iterrows():
+        code = str(row.get('基金代码', '')).zfill(6)
+        name = str(row.get('基金简称', ''))
+        if code and code not in fund_codes:
+            fund_list.append({'code': code, 'name': name})
+            fund_codes.add(code)
+    
+    log(f"总计获取 {len(fund_list)} 只基金信息")
+    return fund_list
 
 
 def convert_code(code, stock_or_fund):
@@ -259,7 +279,7 @@ def transfer_to_postgresql(duckdb_conn):
         
         if grab_record:
             pg_cursor.execute("""
-                INSERT INTO grab_record (type, status, start_time, end_time, result)
+                INSERT INTO grab_record (type, status, start_time, end_time, message)
                 VALUES (%s, %s, %s, %s, %s)
             """, (
                 grab_record[1],

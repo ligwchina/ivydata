@@ -5,8 +5,9 @@ export async function handleFetchBaseData(): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log('开始抓取基础数据...')
     
-    const pythonPath = config.python.baseDataScript
-    const childProcess = spawn('python', [pythonPath], {
+    const pythonExe = config.python.pythonPath
+    const scriptPath = config.python.baseDataScript
+    const childProcess = spawn(pythonExe, [scriptPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     })

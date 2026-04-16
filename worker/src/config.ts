@@ -4,6 +4,7 @@ export const config = {
     prefetch: 1
   },
   python: {
+    pythonPath: 'D:\\dev\\ai\\ivydata\\myenv311\\Scripts\\python.exe',
     baseDataScript: 'D:\\dev\\ai\\ivydata\\data\\base_data_with_duckdb.py',
     klineDataScript: 'D:\\dev\\ai\\ivydata\\data\\day_k_data_with_duckdb.py',
     checkAndFillKlineDataScript: 'D:\\dev\\ai\\ivydata\\data\\check_and_fill_kline_data.py'

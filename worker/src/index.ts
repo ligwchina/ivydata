@@ -120,6 +120,31 @@ async function start() {
     console.log('kline_data 表创建成功')
   }
   
+  // 检查 grab_record 表是否存在
+  const checkGrabRecordTableResult = await query(`
+    SELECT EXISTS (
+      SELECT FROM information_schema.tables 
+      WHERE table_name = 'grab_record'
+    )
+  `)
+  const grabRecordTableExists = (checkGrabRecordTableResult[0] as Record<string, unknown>).exists
+  
+  if (!grabRecordTableExists) {
+    console.log('创建 grab_record 表...')
+    await exec(`
+      CREATE TABLE grab_record (
+        id SERIAL PRIMARY KEY,
+        type VARCHAR(50) NOT NULL,
+        status VARCHAR(20) NOT NULL,
+        message TEXT,
+        start_time TIMESTAMP,
+        end_time TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    console.log('grab_record 表创建成功')
+  }
+  
   console.log('数据库表结构初始化完成')
 
   await consumeQueue('base_data_queue', handleMessage)

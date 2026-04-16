@@ -1,5 +1,6 @@
 import akshare as ak
 import psycopg2
+from psycopg2.extras import execute_values
 import os
 import sys
 import requests
@@ -12,12 +13,13 @@ sys.stderr.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from code_converter import convert_code, get_exchange, is_a_stock, is_fund
 
+# PostgreSQL 配置
 DB_CONFIG = {
     'host': '127.0.0.1',
     'port': 5432,
+    'database': 'ivydata',
     'user': 'ivydata',
-    'password': 'jcXz3rPjWrHY8MKF',
-    'database': 'ivydata'
+    'password': 'jcXz3rPjWrHY8MKF'
 }
 
 def get_db_connection():
@@ -25,8 +27,10 @@ def get_db_connection():
 
 def init_db():
     conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
+    cursor = conn.cursor()
+    
+    # 检查并创建 base_data 表
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS base_data (
             id SERIAL PRIMARY KEY,
             code VARCHAR(20) NOT NULL UNIQUE,
@@ -38,10 +42,9 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    
     conn.commit()
-    cur.close()
     return conn
-
 
 def get_all_stocks():
     try:
@@ -51,7 +54,6 @@ def get_all_stocks():
     except Exception as e:
         print(f"获取股票列表失败: {e}")
         return None
-
 
 def get_all_funds():
     try:
@@ -72,24 +74,23 @@ def get_all_funds():
         traceback.print_exc()
         return None
 
-
 def insert_stocks(conn, incremental=True):
     stock_df = get_all_stocks()
     if stock_df is None:
         return 0, 0
 
-    cur = conn.cursor()
-    
     stock_df = stock_df[['code', 'name']].copy()
     stock_df['code_converted'] = stock_df['code'].apply(convert_code)
     stock_df['exchange'] = stock_df['code'].apply(get_exchange)
     stock_df['stock_or_fund'] = 1
 
+    cursor = conn.cursor()
+    
     if incremental:
-        cur.execute("SELECT code FROM base_data WHERE stock_or_fund = 1")
-        existing_codes = set(row[0] for row in cur.fetchall())
+        cursor.execute("SELECT code FROM base_data WHERE stock_or_fund = 1")
+        existing_codes = {row[0] for row in cursor.fetchall()}
     else:
-        cur.execute("DELETE FROM base_data WHERE stock_or_fund = 1")
+        cursor.execute("DELETE FROM base_data WHERE stock_or_fund = 1")
         existing_codes = set()
 
     new_df = stock_df[~stock_df['code'].isin(existing_codes)]
@@ -98,32 +99,42 @@ def insert_stocks(conn, incremental=True):
     added_count = 0
     updated_count = 0
 
-    for _, row in new_df.iterrows():
-        cur.execute("""
+    # 批量插入新数据
+    if len(new_df) > 0:
+        insert_data = []
+        for _, row in new_df.iterrows():
+            insert_data.append((
+                row['code'],
+                row['name'],
+                row['code_converted'],
+                row['exchange'],
+                row['stock_or_fund']
+            ))
+        
+        execute_values(cursor, """
             INSERT INTO base_data (code, name, code_converted, exchange, stock_or_fund)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (row['code'], row['name'], row['code_converted'], row['exchange'], row['stock_or_fund']))
-        added_count += 1
+            VALUES %s
+        """, insert_data)
+        added_count = len(new_df)
 
-    for _, row in update_df.iterrows():
-        cur.execute("""
-            UPDATE base_data 
-            SET name = %s, code_converted = %s, exchange = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE code = %s AND stock_or_fund = 1
-        """, (row['name'], row['code_converted'], row['exchange'], row['code']))
-        updated_count += 1
+    # 更新现有数据
+    if len(update_df) > 0:
+        for _, row in update_df.iterrows():
+            cursor.execute("""
+                UPDATE base_data 
+                SET name = %s, code_converted = %s, exchange = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE code = %s AND stock_or_fund = 1
+            """, (row['name'], row['code_converted'], row['exchange'], row['code']))
+            updated_count += 1
 
     conn.commit()
     print(f"股票数据 - 新增: {added_count}条, 更新: {updated_count}条")
     return added_count, updated_count
 
-
 def insert_funds(conn, incremental=True):
     fund_df = get_all_funds()
     if fund_df is None:
         return 0, 0
-
-    cur = conn.cursor()
 
     if '基金代码' in fund_df.columns and '基金简称' in fund_df.columns:
         fund_df = fund_df[['基金代码', '基金简称']].copy()
@@ -142,11 +153,13 @@ def insert_funds(conn, incremental=True):
     fund_df['exchange'] = fund_df['code'].apply(get_exchange)
     fund_df['stock_or_fund'] = 2
 
+    cursor = conn.cursor()
+    
     if incremental:
-        cur.execute("SELECT code FROM base_data WHERE stock_or_fund = 2")
-        existing_codes = set(row[0] for row in cur.fetchall())
+        cursor.execute("SELECT code FROM base_data WHERE stock_or_fund = 2")
+        existing_codes = {row[0] for row in cursor.fetchall()}
     else:
-        cur.execute("DELETE FROM base_data WHERE stock_or_fund = 2")
+        cursor.execute("DELETE FROM base_data WHERE stock_or_fund = 2")
         existing_codes = set()
 
     new_df = fund_df[~fund_df['code'].isin(existing_codes)]
@@ -155,25 +168,37 @@ def insert_funds(conn, incremental=True):
     added_count = 0
     updated_count = 0
 
-    for _, row in new_df.iterrows():
-        cur.execute("""
+    # 批量插入新数据
+    if len(new_df) > 0:
+        insert_data = []
+        for _, row in new_df.iterrows():
+            insert_data.append((
+                row['code'],
+                row['name'],
+                row['code_converted'],
+                row['exchange'],
+                row['stock_or_fund']
+            ))
+        
+        execute_values(cursor, """
             INSERT INTO base_data (code, name, code_converted, exchange, stock_or_fund)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (row['code'], row['name'], row['code_converted'], row['exchange'], row['stock_or_fund']))
-        added_count += 1
+            VALUES %s
+        """, insert_data)
+        added_count = len(new_df)
 
-    for _, row in update_df.iterrows():
-        cur.execute("""
-            UPDATE base_data 
-            SET name = %s, code_converted = %s, exchange = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE code = %s AND stock_or_fund = 2
-        """, (row['name'], row['code_converted'], row['exchange'], row['code']))
-        updated_count += 1
+    # 更新现有数据
+    if len(update_df) > 0:
+        for _, row in update_df.iterrows():
+            cursor.execute("""
+                UPDATE base_data 
+                SET name = %s, code_converted = %s, exchange = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE code = %s AND stock_or_fund = 2
+            """, (row['name'], row['code_converted'], row['exchange'], row['code']))
+            updated_count += 1
 
     conn.commit()
     print(f"基金数据 - 新增: {added_count}条, 更新: {updated_count}条")
     return added_count, updated_count
-
 
 def main(incremental=True):
     if incremental:
@@ -186,30 +211,33 @@ def main(incremental=True):
     stock_added, stock_updated = insert_stocks(conn, incremental)
     fund_added, fund_updated = insert_funds(conn, incremental)
 
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM base_data")
-    result = cur.fetchone()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM base_data")
+    result = cursor.fetchone()
     print(f"\n表中总数据量: {result[0]}")
 
-    cur.execute("SELECT COUNT(*) FROM base_data WHERE stock_or_fund = 1")
-    stock_result = cur.fetchone()
-    cur.execute("SELECT COUNT(*) FROM base_data WHERE stock_or_fund = 2")
-    fund_result = cur.fetchone()
+    cursor.execute("SELECT COUNT(*) FROM base_data WHERE stock_or_fund = 1")
+    stock_result = cursor.fetchone()
+    
+    cursor.execute("SELECT COUNT(*) FROM base_data WHERE stock_or_fund = 2")
+    fund_result = cursor.fetchone()
+    
     print(f"股票数量: {stock_result[0]}, 基金数量: {fund_result[0]}")
 
     print(f"\n更新统计:")
     print(f"  股票 - 新增: {stock_added}, 更新: {stock_updated}")
     print(f"  基金 - 新增: {fund_added}, 更新: {fund_updated}")
 
-    cur.execute("SELECT code, name, code_converted, exchange, stock_or_fund FROM base_data ORDER BY stock_or_fund, code LIMIT 5")
-    sample = cur.fetchall()
+    cursor.execute("SELECT code, name, code_converted, exchange, stock_or_fund FROM base_data ORDER BY stock_or_fund, code LIMIT 5")
+    sample = cursor.fetchall()
     print("\n示例数据:")
     for row in sample:
         print(f"  {row}")
 
     import json
-    cur.execute("SELECT code, name, code_converted, exchange, stock_or_fund FROM base_data ORDER BY stock_or_fund, code")
-    all_data = cur.fetchall()
+    cursor.execute("SELECT code, name, code_converted, exchange, stock_or_fund FROM base_data ORDER BY stock_or_fund, code")
+    all_data = cursor.fetchall()
     result = []
     for row in all_data:
         result.append({
@@ -223,10 +251,8 @@ def main(incremental=True):
     print(json.dumps(result, ensure_ascii=False))
     print("___JSON_OUTPUT_END___")
 
-    cur.close()
     conn.close()
     print("\n数据更新完成!")
-
 
 if __name__ == "__main__":
     import argparse

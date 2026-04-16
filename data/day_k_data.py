@@ -1,6 +1,7 @@
 import os
 import sys
 import psycopg2
+from psycopg2.extras import execute_values
 import pandas as pd
 from datetime import datetime
 import traceback
@@ -17,32 +18,30 @@ sys.path.insert(0, pyplugins_user_path)
 
 from tqcenter import tq
 
+# PostgreSQL 配置
 DB_CONFIG = {
     'host': '127.0.0.1',
     'port': 5432,
+    'database': 'ivydata',
     'user': 'ivydata',
-    'password': 'jcXz3rPjWrHY8MKF',
-    'database': 'ivydata'
+    'password': 'jcXz3rPjWrHY8MKF'
 }
-
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.txt')
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-LOG_FILE = os.path.join(LOG_DIR, f'grab_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
-
 
 def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
 
 
 def ensure_log_dir():
-    if not os.path.exists(LOG_DIR):
-        os.makedirs(LOG_DIR)
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
 
 
 def log(message, end='\n'):
     print(message, end=end)
     ensure_log_dir()
-    with open(LOG_FILE, 'a', encoding='utf-8') as f:
+    log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs', f'grab_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(message + end)
 
 
@@ -57,14 +56,15 @@ def print_warning(message):
 
 
 def get_config_value():
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.txt')
     try:
-        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if line.startswith('is_run='):
                     return int(line.split('=')[1])
     except FileNotFoundError:
-        print_warning(f"配置文件不存在: {CONFIG_PATH}，将使用默认值 is_run=0")
+        print_warning(f"配置文件不存在: {config_path}，将使用默认值 is_run=0")
     except Exception as e:
         print_warning(f"读取配置文件失败: {e}，将使用默认值 is_run=0")
     return 0
@@ -72,9 +72,9 @@ def get_config_value():
 
 def init_db():
     conn = get_db_connection()
-    cur = conn.cursor()
+    cursor = conn.cursor()
     
-    cur.execute("""
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS kline_data (
             id SERIAL PRIMARY KEY,
             code VARCHAR(20) NOT NULL,
@@ -90,7 +90,7 @@ def init_db():
         )
     """)
     
-    cur.execute("""
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS grab_record (
             code VARCHAR(20) PRIMARY KEY,
             start_time TIMESTAMP,
@@ -98,25 +98,24 @@ def init_db():
         )
     """)
     
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_kline_code ON kline_data(code)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_kline_date ON kline_data(date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_kline_code ON kline_data(code)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_kline_date ON kline_data(date)")
     
     conn.commit()
-    cur.close()
     log("数据库表初始化完成")
     return conn
 
 
 def get_all_codes(conn):
     try:
-        cur = conn.cursor()
-        cur.execute("""
+        cursor = conn.cursor()
+        cursor.execute("""
             SELECT code, code_converted FROM base_data ORDER BY stock_or_fund, code
         """)
-        result = cur.fetchall()
+        result = cursor.fetchall()
         
-        cur.execute("SELECT code FROM grab_record")
-        grabbed_codes = set(row[0] for row in cur.fetchall())
+        cursor.execute("SELECT code FROM grab_record")
+        grabbed_codes = {row[0] for row in cursor.fetchall()}
         
         codes = []
         for row in result:
@@ -127,7 +126,6 @@ def get_all_codes(conn):
                 'is_new': code not in grabbed_codes
             })
         
-        cur.close()
         return codes
     except Exception as e:
         print_error(f"查询代码列表失败\n详细信息: {e}")
@@ -186,63 +184,65 @@ def save_day_k_data(conn, df, code, incremental=True):
     if df is None or len(df) == 0:
         return 0, None
 
-    cur = conn.cursor()
     try:
         df['date'] = pd.to_datetime(df['date']).dt.date
         
+        cursor = conn.cursor()
+        
         if incremental:
-            cur.execute("SELECT date FROM kline_data WHERE code = %s", (code,))
-            existing_dates = set(row[0] for row in cur.fetchall())
+            cursor.execute("SELECT date FROM kline_data WHERE code = %s", (code,))
+            existing_dates = {row[0] for row in cursor.fetchall()}
             new_df = df[~df['date'].isin(existing_dates)]
         else:
-            cur.execute("DELETE FROM kline_data WHERE code = %s", (code,))
+            cursor.execute("DELETE FROM kline_data WHERE code = %s", (code,))
             new_df = df
 
         count = 0
-        for _, row in new_df.iterrows():
-            try:
-                cur.execute("""
-                    INSERT INTO kline_data (code, date, open, high, low, close, volume, amount)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (code, date) DO UPDATE SET
-                        open = EXCLUDED.open,
-                        high = EXCLUDED.high,
-                        low = EXCLUDED.low,
-                        close = EXCLUDED.close,
-                        volume = EXCLUDED.volume,
-                        amount = EXCLUDED.amount
-                """, (row['code'], row['date'], row['open'], row['high'], row['low'], row['close'], row['volume'], row['amount']))
-                count += 1
-            except Exception as e:
-                log(f"插入数据失败: {e}")
+        
+        if len(new_df) > 0:
+            insert_data = []
+            for _, row in new_df.iterrows():
+                insert_data.append((
+                    row['code'],
+                    row['date'],
+                    row['open'],
+                    row['high'],
+                    row['low'],
+                    row['close'],
+                    row['volume'],
+                    row['amount']
+                ))
+            
+            execute_values(cursor, """
+                INSERT INTO kline_data (code, date, open, high, low, close, volume, amount)
+                VALUES %s
+                ON CONFLICT (code, date) DO NOTHING
+            """, insert_data)
+            count = len(new_df)
 
         conn.commit()
         return count, None
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         return 0, error_msg
-    finally:
-        cur.close()
 
 
 def get_last_k_date(conn, code):
-    cur = conn.cursor()
     try:
-        cur.execute("SELECT MAX(date) FROM kline_data WHERE code = %s", (code,))
-        result = cur.fetchone()
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(date) FROM kline_data WHERE code = %s", (code,))
+        result = cursor.fetchone()
         if result and result[0]:
             return str(result[0])
         return None
     except Exception as e:
         return None
-    finally:
-        cur.close()
 
 
 def update_grab_record(conn, code, start_time, end_time):
-    cur = conn.cursor()
     try:
-        cur.execute("""
+        cursor = conn.cursor()
+        cursor.execute("""
             INSERT INTO grab_record (code, start_time, end_time)
             VALUES (%s, %s, %s)
             ON CONFLICT (code) DO UPDATE SET
@@ -254,8 +254,6 @@ def update_grab_record(conn, code, start_time, end_time):
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         return error_msg
-    finally:
-        cur.close()
 
 
 def graceful_exit(conn, message):
@@ -417,6 +415,7 @@ def main():
         log(f"新增K线记录: {total_new_records} 条")
         log("=" * 50)
 
+        import json
         print("\n___JSON_OUTPUT_START___")
         print(json.dumps({"success": success_count, "fail": fail_count, "records": total_new_records}))
         print("___JSON_OUTPUT_END___")
@@ -447,5 +446,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import json
     main()

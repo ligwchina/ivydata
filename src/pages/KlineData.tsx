@@ -24,15 +24,33 @@ export default function KlineData() {
   const [chartData, setChartData] = useState<KlineDataItem[]>([])
 
   // 从API获取K线数据
+  // 数据转换函数
+  const convertData = (rawData: unknown[]): KlineItem[] => {
+    return rawData.map((item: unknown) => {
+      const record = item as Record<string, unknown>
+      return {
+        code: String(record.code || ''),
+        date: String(record.date || ''),
+        open: Number(record.open) || 0,
+        high: Number(record.high) || 0,
+        low: Number(record.low) || 0,
+        close: Number(record.close) || 0,
+        volume: Number(record.volume) || 0,
+        amount: Number(record.amount) || 0
+      }
+    })
+  }
+
   useEffect(() => {
     const fetchKlineData = async () => {
       try {
         const response = await fetch(`/api/data/kline-data?code=${selectedCode}`)
         const result = await response.json()
-        if (result.success) {
-          setChartData(result.data)
-          setData(result.data)
-          setFilteredData(result.data)
+        if (result.success && Array.isArray(result.data)) {
+          const convertedData = convertData(result.data)
+          setChartData(convertedData)
+          setData(convertedData)
+          setFilteredData(convertedData)
         }
       } catch (error) {
         console.error('获取K线数据失败:', error)
@@ -56,9 +74,10 @@ export default function KlineData() {
   }, [searchTerm, data])
 
   // 分页计算
-  const totalPages = Math.ceil(filteredData.length / pageSize)
+  const safeFilteredData = Array.isArray(filteredData) ? filteredData : []
+  const totalPages = Math.ceil(safeFilteredData.length / pageSize)
   const startIndex = (currentPage - 1) * pageSize
-  const paginatedData = filteredData.slice(startIndex, startIndex + pageSize)
+  const paginatedData = safeFilteredData.slice(startIndex, startIndex + pageSize)
 
   const handleFetchKlineData = async () => {
     setIsLoading(true)
@@ -93,6 +112,23 @@ export default function KlineData() {
     // 这里应该从API获取该代码的K线数据
     const codeData = data.filter(item => item.code === code)
     setChartData(codeData)
+  }
+
+  // 安全数值格式化函数
+  const formatNumber = (value: unknown, decimals = 2): string => {
+    const num = Number(value)
+    if (isNaN(num) || value === null || value === undefined) {
+      return '-'
+    }
+    return num.toFixed(decimals)
+  }
+
+  const formatVolume = (value: unknown): string => {
+    const num = Number(value)
+    if (isNaN(num) || value === null || value === undefined) {
+      return '-'
+    }
+    return num.toLocaleString()
   }
 
   return (
@@ -196,12 +232,12 @@ export default function KlineData() {
                 >
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{item.code}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.date}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.open.toFixed(2)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.high.toFixed(2)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.low.toFixed(2)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.close.toFixed(2)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.volume.toLocaleString()}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.amount.toLocaleString()}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatNumber(item.open)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatNumber(item.high)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatNumber(item.low)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatNumber(item.close)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatVolume(item.volume)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatVolume(item.amount)}</td>
                 </tr>
               ))}
             </tbody>

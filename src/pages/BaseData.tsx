@@ -23,7 +23,7 @@ export default function BaseData() {
       try {
         const response = await fetch('/api/data/base-data')
         const result = await response.json()
-        if (result.success) {
+        if (result.success && Array.isArray(result.data)) {
           setData(result.data)
           setFilteredData(result.data)
         }
@@ -51,9 +51,10 @@ export default function BaseData() {
   }, [searchTerm, data])
 
   // 分页计算
-  const totalPages = Math.ceil(filteredData.length / pageSize)
+  const safeFilteredData = Array.isArray(filteredData) ? filteredData : []
+  const totalPages = Math.ceil(safeFilteredData.length / pageSize)
   const startIndex = (currentPage - 1) * pageSize
-  const paginatedData = filteredData.slice(startIndex, startIndex + pageSize)
+  const paginatedData = safeFilteredData.slice(startIndex, startIndex + pageSize)
 
   const handleFetchBaseData = async () => {
     setIsLoading(true)

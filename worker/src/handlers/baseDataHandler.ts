@@ -1,0 +1,43 @@
+import { spawn } from 'child_process'
+import { config } from '../config.js'
+
+export async function handleFetchBaseData(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    console.log('开始抓取基础数据...')
+    
+    const pythonPath = config.python.baseDataScript
+    const childProcess = spawn('python', [pythonPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+    })
+
+    let output = ''
+    let error = ''
+
+    childProcess.stdout.on('data', (data) => {
+      const text = data.toString()
+      console.log('Python stdout:', text)
+      output += text
+    })
+
+    childProcess.stderr.on('data', (data) => {
+      const text = data.toString()
+      console.error('Python stderr:', text)
+      error += text
+    })
+
+    childProcess.on('error', (err) => {
+      console.error('Spawn error:', err)
+      reject(err)
+    })
+
+    childProcess.on('close', (code) => {
+      console.log('Python process exited with code:', code)
+      if (code === 0) {
+        resolve()
+      } else {
+        reject(new Error(error || `Python script exited with code ${code}`))
+      }
+    })
+  })
+}

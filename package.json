@@ -10,9 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc --noEmit",
-    "frontserver:dev": "cd server && pnpm run dev",
-    "backserver:dev": "cd worker && pnpm run dev",
-    "dev": "concurrently \"pnpm run client:dev\" \"pnpm run frontserver:dev\""
+    "server:dev": "cd server && pnpm run dev",
+    "dev": "concurrently \"pnpm run client:dev\" \"pnpm run server:dev\""
   },
   "dependencies": {
     "clsx": "^2.1.1",

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-K线数据增量抓取程序（使用DuckDB临时存储，批量导入PostgreSQL）
+K线数据增量抓取程序（直接写入PostgreSQL）
 """
 
 import os
 import sys
-import duckdb
 import psycopg2
 from psycopg2.extras import execute_values
 import pandas as pd
@@ -19,13 +18,14 @@ sys.stderr.reconfigure(encoding='utf-8')
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../test/base'))
 from data_num import get_trade_dates_since
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from db_helper import ensure_all_tables, update_sys_option
+
 tdx_install_path = r"D:\new_tdx64"
 pyplugins_user_path = os.path.join(tdx_install_path, "PYPlugins", "user")
 sys.path.insert(0, pyplugins_user_path)
 
 from tqcenter import tq
-
-DB_DIR = r'D:\dev\ai\ivydata\db'
 
 POSTGRESQL_CONFIG = {
     'host': '127.0.0.1',
@@ -38,6 +38,42 @@ POSTGRESQL_CONFIG = {
 
 def get_db_connection():
     return psycopg2.connect(**POSTGRESQL_CONFIG)
+
+
+def ensure_base_data_exists():
+    """检查 base_data 表是否存在"""
+    try:
+        log("检查 base_data 表...")
+        
+        pg_conn = get_db_connection()
+        pg_cursor = pg_conn.cursor()
+        
+        pg_cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'base_data'
+            )
+        """)
+        base_data_exists = pg_cursor.fetchone()[0]
+        
+        if not base_data_exists:
+            log("base_data 表不存在，请先运行 base_data.py 创建基础数据")
+            pg_cursor.close()
+            pg_conn.close()
+            raise SystemExit(1)
+        
+        pg_cursor.close()
+        pg_conn.close()
+        
+        log("检查其他表...")
+        ensure_all_tables()
+        
+        log("数据库表结构检查完成")
+    except SystemExit:
+        raise
+    except Exception as e:
+        print_error(f"初始化数据库失败\n详细信息: {e}")
+        raise SystemExit(1)
 
 
 def ensure_log_dir():
@@ -62,42 +98,6 @@ def print_error(message):
 
 def print_warning(message):
     log(f"\n警告: {message}\n")
-
-
-def init_temp_db():
-    """初始化临时DuckDB数据库"""
-    db_path = os.path.join(DB_DIR, 'temp_ivy.duckdb')
-    try:
-        if os.path.exists(db_path):
-            log(f"删除旧的临时数据库...")
-            os.remove(db_path)
-            wal_file = db_path + '.wal'
-            if os.path.exists(wal_file):
-                os.remove(wal_file)
-
-        log(f"创建临时DuckDB数据库...")
-        conn = duckdb.connect(db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            CREATE TABLE kline_data (
-                id INTEGER PRIMARY KEY,
-                code VARCHAR(20),
-                date DATE,
-                open DOUBLE,
-                high DOUBLE,
-                low DOUBLE,
-                close DOUBLE,
-                volume BIGINT,
-                amount DOUBLE
-            )
-        """)
-
-        conn.commit()
-        return conn, db_path
-    except Exception as e:
-        print_error(f"初始化临时数据库失败\n详细信息: {e}")
-        raise SystemExit(1)
 
 
 def get_all_base_data_codes():
@@ -190,23 +190,17 @@ def get_day_k_data(stock_code, stock_code_full, start_date='', end_date=''):
         return None, error_msg
 
 
-def save_to_duckdb(duckdb_conn, df, id_counter):
-    """保存数据到临时DuckDB"""
+def insert_to_postgresql(df):
+    """直接插入数据到PostgreSQL"""
     try:
         if df is None or len(df) == 0:
-            return 0, id_counter
+            return 0
 
         df['date'] = pd.to_datetime(df['date']).dt.date
 
-        cursor = duckdb_conn.cursor()
-
-        count = 0
+        insert_data = []
         for _, row in df.iterrows():
-            cursor.execute("""
-                INSERT INTO kline_data (id, code, date, open, high, low, close, volume, amount)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                id_counter,
+            insert_data.append((
                 row['code'],
                 row['date'],
                 row['open'],
@@ -216,119 +210,48 @@ def save_to_duckdb(duckdb_conn, df, id_counter):
                 int(row['volume']),
                 row['amount']
             ))
-            id_counter += 1
-            count += 1
 
-        return count, id_counter
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        return 0, id_counter
+        if not insert_data:
+            return 0
 
-
-def transfer_to_postgresql(duckdb_conn, duckdb_path, start_time):
-    """从DuckDB迁移数据到PostgreSQL"""
-    full_start = datetime.now()
-    try:
-        log(f"\n开始从临时DuckDB迁移数据到PostgreSQL...")
-
-        step_start = datetime.now()
-        pg_conn = psycopg2.connect(**POSTGRESQL_CONFIG)
-        log(f"  [PG连接] 耗时: {(datetime.now() - step_start).total_seconds():.2f}秒")
-
+        pg_conn = get_db_connection()
         pg_cursor = pg_conn.cursor()
 
         step_start = datetime.now()
-        duckdb_cursor = duckdb_conn.cursor()
-        duckdb_cursor.execute("SELECT * FROM kline_data ORDER BY id")
-        kline_data_rows = duckdb_cursor.fetchall()
-        log(f"  [DuckDB读取] 耗时: {(datetime.now() - step_start).total_seconds():.2f}秒, 读取到 {len(kline_data_rows)} 条")
+        execute_values(pg_cursor, """
+            INSERT INTO kline_data (code, date, open, high, low, close, volume, amount)
+            VALUES %s
+            ON CONFLICT (code, date) DO NOTHING
+        """, insert_data)
+        pg_conn.commit()
+        log(f"  [PG插入] 耗时: {(datetime.now() - step_start).total_seconds():.2f}秒, 插入 {len(insert_data)} 条")
 
-        insert_data = []
-        for row in kline_data_rows:
-            insert_data.append((
-                row[1],
-                row[2],
-                row[3],
-                row[4],
-                row[5],
-                row[6],
-                row[7],
-                row[8]
-            ))
-
-        if insert_data:
-            step_start = datetime.now()
-            execute_values(pg_cursor, """
-                INSERT INTO kline_data (code, date, open, high, low, close, volume, amount)
-                VALUES %s
-                ON CONFLICT (code, date) DO NOTHING
-            """, insert_data)
-            log(f"  [PG批量插入] 耗时: {(datetime.now() - step_start).total_seconds():.2f}秒")
-
-            end_time = datetime.now()
-            pg_cursor.execute("""
-                INSERT INTO grab_record (type, status, start_time, end_time, message)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (
-                'kline_data',
-                'completed',
-                start_time,
-                end_time,
-                f'Successfully processed {len(insert_data)} K-line records'
-            ))
-
-            step_start = datetime.now()
-            pg_conn.commit()
-            log(f"  [PG提交] 耗时: {(datetime.now() - step_start).total_seconds():.2f}秒")
-            log(f"成功迁移 {len(insert_data)} 条数据到PostgreSQL")
+        inserted_count = len(insert_data)
 
         pg_cursor.close()
         pg_conn.close()
 
-        total_elapsed = (datetime.now() - full_start).total_seconds()
-        log(f"  [迁移总耗时] {total_elapsed:.2f}秒")
-        return len(insert_data)
+        return inserted_count
     except Exception as e:
-        print_error(f"迁移到PostgreSQL失败\n详细信息: {e}")
+        print_error(f"插入PostgreSQL失败\n详细信息: {e}")
         raise SystemExit(1)
-
-
-def delete_temp_db(duckdb_path):
-    """删除临时DuckDB"""
-    try:
-        if os.path.exists(duckdb_path):
-            log(f"删除临时DuckDB文件...")
-            os.remove(duckdb_path)
-
-            wal_file = duckdb_path + '.wal'
-            if os.path.exists(wal_file):
-                os.remove(wal_file)
-
-            log(f"临时数据库已删除")
-    except Exception as e:
-        print_warning(f"删除临时数据库失败: {e}")
 
 
 def main():
     log("=" * 50)
-    log("K线数据增量抓取程序启动（DuckDB临时存储版）")
+    log("K线数据增量抓取程序启动（直接写入PostgreSQL版）")
     log("=" * 50)
 
     start_time = datetime.now()
 
-    if not os.path.exists(DB_DIR):
-        os.makedirs(DB_DIR)
-
     try:
+        ensure_base_data_exists()
+
         tq.initialize(__file__)
         log("TQ数据接口初始化成功，使用路径: D:\\dev\\ai\\ivydata\\data\\day_k_data_with_duckdb.py")
     except Exception as e:
         log(f"TQ数据接口初始化失败: {e}")
         raise SystemExit(1)
-
-    pg_conn = None
-    duckdb_conn = None
-    duckdb_path = None
 
     try:
         codes = get_all_base_data_codes()
@@ -347,7 +270,6 @@ def main():
         fail_count = 0
         skip_count = 0
         total_records = 0
-        id_counter = 1
 
         for i, (code, code_converted) in enumerate(codes):
             loop_start = datetime.now()
@@ -388,17 +310,11 @@ def main():
                 fail_count += 1
                 continue
 
-            if duckdb_conn is None:
-                step_start = datetime.now()
-                duckdb_conn, duckdb_path = init_temp_db()
-                log(f"  [步骤2] 初始化DuckDB耗时: {(datetime.now() - step_start).total_seconds():.2f}秒")
-
             step_start = datetime.now()
-            save_count, id_counter = save_to_duckdb(duckdb_conn, df, id_counter)
-            log(f"  [步骤3] 写入DuckDB耗时: {(datetime.now() - step_start).total_seconds():.2f}秒")
+            save_count = insert_to_postgresql(df)
 
             if save_count > 0:
-                log(f"  成功写入临时DuckDB: {save_count} 条")
+                log(f"  成功写入PostgreSQL: {save_count} 条")
                 total_records += save_count
                 success_count += 1
             else:
@@ -408,9 +324,6 @@ def main():
             loop_elapsed = (datetime.now() - loop_start).total_seconds()
             log(f"  [循环总耗时] {loop_elapsed:.2f}秒")
 
-        if total_records > 0 and duckdb_conn:
-            transfer_to_postgresql(duckdb_conn, duckdb_path, start_time)
-
         log("\n" + "=" * 50)
         log("K线数据抓取完成!")
         log(f"成功: {success_count} 个代码")
@@ -418,14 +331,8 @@ def main():
         log(f"跳过: {skip_count} 个代码")
         log(f"新增K线记录: {total_records} 条")
         log("=" * 50)
-
-        if duckdb_conn:
-            duckdb_conn.close()
-            duckdb_conn = None
-
-        if duckdb_path:
-            delete_temp_db(duckdb_path)
-            duckdb_path = None
+        
+        update_sys_option('last_kline_data_fetch', log_func=log)
 
         try:
             tq.close()
@@ -446,13 +353,6 @@ def main():
         raise
     except KeyboardInterrupt:
         print_error("用户中断程序")
-        if duckdb_conn:
-            try:
-                duckdb_conn.close()
-            except:
-                pass
-        if duckdb_path:
-            delete_temp_db(duckdb_path)
         try:
             tq.close()
         except:
@@ -461,15 +361,6 @@ def main():
     except Exception as e:
         error_details = traceback.format_exc()
         print_error(f"程序执行过程中发生未预期的错误\n{error_details}")
-        log(f"\n已处理成功的数据已保存到数据库")
-        log(f"未处理成功的代码可在下次运行时重新处理")
-        if duckdb_conn:
-            try:
-                duckdb_conn.close()
-            except:
-                pass
-        if duckdb_path:
-            delete_temp_db(duckdb_path)
         try:
             tq.close()
         except:

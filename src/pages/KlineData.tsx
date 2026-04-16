@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, Download, RefreshCw, PlayCircle } from 'lucide-react'
+import { Search, Download } from 'lucide-react'
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Brush } from 'recharts'
 
 interface KlineDataItem {
@@ -17,15 +17,12 @@ export default function KlineData() {
   const [data, setData] = useState<KlineDataItem[]>([])
   const [filteredData, setFilteredData] = useState<KlineDataItem[]>([])
   const [searchTerm, setSearchTerm] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 50
   const [selectedCode, setSelectedCode] = useState('600519')
   const [chartData, setChartData] = useState<KlineDataItem[]>([])
 
-  // 从API获取K线数据
-  // 数据转换函数
-  const convertData = (rawData: unknown[]): KlineItem[] => {
+  const convertData = (rawData: unknown[]): KlineDataItem[] => {
     return rawData.map((item: unknown) => {
       const record = item as Record<string, unknown>
       return {
@@ -60,7 +57,6 @@ export default function KlineData() {
     fetchKlineData()
   }, [selectedCode])
 
-  // 搜索功能
   useEffect(() => {
     if (searchTerm) {
       const filtered = data.filter(item =>
@@ -73,48 +69,21 @@ export default function KlineData() {
     }
   }, [searchTerm, data])
 
-  // 分页计算
   const safeFilteredData = Array.isArray(filteredData) ? filteredData : []
   const totalPages = Math.ceil(safeFilteredData.length / pageSize)
   const startIndex = (currentPage - 1) * pageSize
   const paginatedData = safeFilteredData.slice(startIndex, startIndex + pageSize)
 
-  const handleFetchKlineData = async () => {
-    setIsLoading(true)
-    try {
-      const response = await fetch('/api/data/kline-data', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      })
-      const data = await response.json()
-      if (data.success) {
-        alert('K线数据抓取任务已开始')
-      } else {
-        alert('K线数据抓取任务失败: ' + data.message)
-      }
-    } catch (error) {
-      console.error('调用API失败:', error)
-      alert('调用API失败，请检查后端服务是否运行')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   const handleExportData = () => {
-    // 这里应该实现导出功能
     alert('数据导出功能已触发')
   }
 
   const handleCodeChange = (code: string) => {
     setSelectedCode(code)
-    // 这里应该从API获取该代码的K线数据
     const codeData = data.filter(item => item.code === code)
     setChartData(codeData)
   }
 
-  // 安全数值格式化函数
   const formatNumber = (value: unknown, decimals = 2): string => {
     const num = Number(value)
     if (isNaN(num) || value === null || value === undefined) {
@@ -133,7 +102,6 @@ export default function KlineData() {
 
   return (
     <div className="space-y-6">
-      {/* 操作面板 */}
       <div className="bg-white p-6 rounded-lg shadow-sm">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div className="flex-1">
@@ -156,28 +124,10 @@ export default function KlineData() {
               <Download className="w-4 h-4 mr-2" />
               导出数据
             </button>
-            <button
-              onClick={handleFetchKlineData}
-              disabled={isLoading}
-              className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-            >
-              {isLoading ? (
-                <span className="flex items-center">
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  执行中...
-                </span>
-              ) : (
-                <span className="flex items-center">
-                  <PlayCircle className="w-4 h-4 mr-2" />
-                  抓取数据
-                </span>
-              )}
-            </button>
           </div>
         </div>
       </div>
 
-      {/* 数据可视化 */}
       <div className="bg-white p-6 rounded-lg shadow-sm">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-semibold text-gray-800">K线图表</h3>
@@ -207,7 +157,6 @@ export default function KlineData() {
         </div>
       </div>
 
-      {/* 数据列表 */}
       <div className="bg-white p-6 rounded-lg shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
@@ -244,7 +193,6 @@ export default function KlineData() {
           </table>
         </div>
 
-        {/* 分页 */}
         <div className="flex items-center justify-between mt-6">
           <div className="text-sm text-gray-500">
             显示 {startIndex + 1} 到 {Math.min(startIndex + pageSize, filteredData.length)} 条，共 {filteredData.length} 条

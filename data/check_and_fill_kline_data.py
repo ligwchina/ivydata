@@ -18,6 +18,9 @@ sys.stderr.reconfigure(encoding='utf-8')
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../test/base'))
 from data_num import get_trade_dates_since
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from db_helper import ensure_all_tables, update_sys_option
+
 tdx_install_path = r"D:\new_tdx64"
 pyplugins_user_path = os.path.join(tdx_install_path, "PYPlugins", "user")
 sys.path.insert(0, pyplugins_user_path)
@@ -35,6 +38,56 @@ DB_CONFIG = {
 
 def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
+
+
+def init_database():
+    """检查并初始化数据库表"""
+    try:
+        log("检查数据库表结构...")
+        
+        pg_conn = get_db_connection()
+        pg_cursor = pg_conn.cursor()
+        
+        pg_cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'base_data'
+            )
+        """)
+        base_data_exists = pg_cursor.fetchone()[0]
+        
+        if not base_data_exists:
+            log("错误: base_data 表不存在，请先运行 base_data.py 创建基础数据")
+            pg_cursor.close()
+            pg_conn.close()
+            raise SystemExit(1)
+        
+        pg_cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'kline_data'
+            )
+        """)
+        kline_data_exists = pg_cursor.fetchone()[0]
+        
+        if not kline_data_exists:
+            log("错误: kline_data 表不存在，请先运行 day_k_data.py 创建K线数据表")
+            pg_cursor.close()
+            pg_conn.close()
+            raise SystemExit(1)
+        
+        pg_cursor.close()
+        pg_conn.close()
+        
+        log("检查其他表...")
+        ensure_all_tables()
+        
+        log("数据库表结构检查完成")
+    except SystemExit:
+        raise
+    except Exception as e:
+        print_error(f"检查数据库失败\n详细信息: {e}")
+        raise SystemExit(1)
 
 
 def ensure_log_dir():
@@ -238,6 +291,8 @@ def main(target_code=None):
     log("=" * 50)
     log("K线数据检查并补充程序启动")
     log("=" * 50)
+    
+    init_database()
     
     try:
         tq.initialize(__file__)

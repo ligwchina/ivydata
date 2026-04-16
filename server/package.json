@@ -10,13 +10,11 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "amqplib": "^0.10.3",
     "pg": "^8.13.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
-    "@types/amqplib": "^0.10.5",
     "@types/pg": "^8.11.10",
     "@types/node": "^22.15.30",
     "tsx": "^4.19.0",

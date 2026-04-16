@@ -1,40 +1,45 @@
 import { Router, Request, Response } from 'express'
 import { query } from '../db'
-import { sendToQueue, QUEUE_NAMES } from '../services/rabbitmq'
 
 const router = Router()
 
-// 获取统计数据
 router.get('/stats', async (req: Request, res: Response) => {
   try {
-    // 获取股票数量
     const stockResult = await query(
       'SELECT COUNT(*) as count FROM base_data WHERE stock_or_fund = 1'
     )
     const stockRow = stockResult[0] as Record<string, unknown>
     const stockCount = Number(stockRow.count) || 0
     
-    // 获取基金数量
     const fundResult = await query(
       'SELECT COUNT(*) as count FROM base_data WHERE stock_or_fund = 2'
     )
     const fundRow = fundResult[0] as Record<string, unknown>
     const fundCount = Number(fundRow.count) || 0
     
-    // 获取最后更新时间
-    const lastUpdateResult = await query(
-      'SELECT MAX(updated_at) as "lastUpdate" FROM base_data'
+    const sysOptionsResult = await query(
+      "SELECT option_key, option_value FROM sys_options WHERE option_key IN ('last_base_data_fetch', 'last_kline_data_fetch')"
     )
-    const lastUpdateRow = lastUpdateResult[0] as Record<string, unknown>
-    const lastUpdate = lastUpdateRow.lastUpdate ? String(lastUpdateRow.lastUpdate) : '从未'
+    
+    let lastBaseDataFetch = '从未'
+    let lastKlineDataFetch = '从未'
+    
+    for (const row of sysOptionsResult as Array<Record<string, unknown>>) {
+      if (row.option_key === 'last_base_data_fetch' && row.option_value) {
+        lastBaseDataFetch = String(row.option_value)
+      }
+      if (row.option_key === 'last_kline_data_fetch' && row.option_value) {
+        lastKlineDataFetch = String(row.option_value)
+      }
+    }
     
     res.json({
       success: true,
       data: {
         stockCount: stockCount,
         fundCount: fundCount,
-        lastBaseDataFetch: lastUpdate,
-        lastKlineDataFetch: '从未'
+        lastBaseDataFetch: lastBaseDataFetch,
+        lastKlineDataFetch: lastKlineDataFetch
       }
     })
   } catch (error) {
@@ -47,7 +52,6 @@ router.get('/stats', async (req: Request, res: Response) => {
   }
 })
 
-// 获取基础数据
 router.get('/base-data', async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1
@@ -75,7 +79,6 @@ router.get('/base-data', async (req: Request, res: Response) => {
       params.push(type)
     }
     
-    // 获取总数
     const countResult = await query(
       'SELECT COUNT(*) as total FROM base_data' + whereClause,
       params
@@ -83,7 +86,6 @@ router.get('/base-data', async (req: Request, res: Response) => {
     const countRow = countResult[0] as Record<string, unknown>
     const total = Number(countRow.total) || 0
     
-    // 获取数据
     const offset = (page - 1) * pageSize
     const limitParamIndex = params.length + 1
     const offsetParamIndex = params.length + 2
@@ -110,26 +112,6 @@ router.get('/base-data', async (req: Request, res: Response) => {
   }
 })
 
-// 抓取基础数据（发送消息到队列）
-router.post('/base-data', (req: Request, res: Response) => {
-  try {
-    console.log('收到抓取基础数据请求')
-    sendToQueue(QUEUE_NAMES.BASE_DATA, { action: 'fetch_base_data' })
-    res.json({
-      success: true,
-      message: '抓取任务已提交'
-    })
-  } catch (error) {
-    console.error('提交抓取任务失败:', error)
-    res.status(500).json({
-      success: false,
-      message: '提交失败',
-      error: (error as Error).message
-    })
-  }
-})
-
-// 获取K线数据
 router.get('/kline-data', async (req: Request, res: Response) => {
   try {
     const code = (req.query.code as string) || ''
@@ -144,7 +126,6 @@ router.get('/kline-data', async (req: Request, res: Response) => {
       params.push(code)
     }
     
-    // 获取数据
     const data = await query(
       'SELECT code, date, open, high, low, close, volume, amount FROM kline_data' + whereClause + ' ORDER BY date DESC LIMIT 1000',
       params
@@ -164,33 +145,12 @@ router.get('/kline-data', async (req: Request, res: Response) => {
   }
 })
 
-// 抓取K线数据（发送消息到队列）
-router.post('/kline-data', (req: Request, res: Response) => {
-  try {
-    console.log('收到抓取K线数据请求')
-    sendToQueue(QUEUE_NAMES.KLINE_DATA, { action: 'fetch_kline_data' })
-    res.json({
-      success: true,
-      message: '抓取任务已提交'
-    })
-  } catch (error) {
-    console.error('提交抓取任务失败:', error)
-    res.status(500).json({
-      success: false,
-      message: '提交失败',
-      error: (error as Error).message
-    })
-  }
-})
-
-// 检查K线数据完整性
 router.get('/kline-data/check', async (req: Request, res: Response) => {
   try {
     const code = (req.query.code as string) || ''
     
     console.log('检查K线数据完整性:', { code })
     
-    // 获取所有有K线数据的代码
     let codesResult: unknown[] = []
     if (code) {
       codesResult = await query(
@@ -208,7 +168,6 @@ router.get('/kline-data/check', async (req: Request, res: Response) => {
     const results = []
     
     for (const c of codes) {
-      // 获取该代码的K线日期范围
       const dateRangeResult = await query(
         'SELECT MIN(date) as min_date, MAX(date) as max_date FROM kline_data WHERE code = $1',
         [c]
@@ -219,7 +178,6 @@ router.get('/kline-data/check', async (req: Request, res: Response) => {
         continue
       }
       
-      // 获取该代码的所有K线日期
       const existingDatesResult = await query(
         'SELECT date FROM kline_data WHERE code = $1 ORDER BY date',
         [c]
@@ -244,29 +202,6 @@ router.get('/kline-data/check', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: '检查失败',
-      error: (error as Error).message
-    })
-  }
-})
-
-// 检查并补充K线数据（发送消息到队列）
-router.post('/kline-data/check', (req: Request, res: Response) => {
-  try {
-    const { code } = req.body as { code?: string }
-    console.log('收到检查并补充K线数据请求:', { code })
-    sendToQueue(QUEUE_NAMES.KLINE_DATA, { 
-      action: 'check_and_fill_kline_data',
-      code: code || null
-    })
-    res.json({
-      success: true,
-      message: '检查并补充任务已提交'
-    })
-  } catch (error) {
-    console.error('提交检查并补充任务失败:', error)
-    res.status(500).json({
-      success: false,
-      message: '提交失败',
       error: (error as Error).message
     })
   }

@@ -1,6 +1,5 @@
 import { Pool } from 'pg'
 
-// PostgreSQL 配置
 const pool = new Pool({
   host: '127.0.0.1',
   port: 5432,
@@ -14,7 +13,6 @@ const pool = new Pool({
 
 console.log('PostgreSQL 连接池初始化成功')
 
-// 执行查询
 export async function query(sql: string, params: unknown[] = []): Promise<unknown[]> {
   const client = await pool.connect()
   try {
@@ -26,7 +24,16 @@ export async function query(sql: string, params: unknown[] = []): Promise<unknow
   }
 }
 
-// 关闭连接池（用于程序退出时）
+export async function runExec(sql: string, params: unknown[] = []): Promise<void> {
+  const client = await pool.connect()
+  try {
+    console.log('执行 SQL:', sql, '参数:', params)
+    await client.query(sql, params)
+  } finally {
+    client.release()
+  }
+}
+
 export async function closePool(): Promise<void> {
   await pool.end()
   console.log('PostgreSQL 连接池已关闭')
